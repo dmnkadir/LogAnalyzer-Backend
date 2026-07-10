@@ -1,4 +1,5 @@
 package com.example.backend.security;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -17,7 +18,8 @@ public class SecurityConfig {
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**").permitAll()
+                        // /api/logs/** eklendi
+                        .requestMatchers("/api/auth/**", "/api/logs/**").permitAll()
                         .anyRequest().authenticated()
                 );
 
