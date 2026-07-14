@@ -95,6 +95,7 @@ public class LogController {
         stats.put("errorCount", logRecordRepository.countByUserAndLogLevel(currentUser, "ERROR"));
         stats.put("warnCount", logRecordRepository.countByUserAndLogLevel(currentUser, "WARN"));
         stats.put("infoCount", logRecordRepository.countByUserAndLogLevel(currentUser, "INFO"));
+        stats.put("debugCount", logRecordRepository.countByUserAndLogLevel(currentUser, "DEBUG"));
 
         return ResponseEntity.ok(stats);
     }
