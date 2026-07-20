@@ -34,8 +34,6 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
-                        // /api/ai/** adresini permitAll() listesinden SİLDİK.
-                        // Artık sadece /api/auth/** herkese açık.
                         .requestMatchers("/api/auth/**").permitAll()
                         .anyRequest().authenticated()
                 )

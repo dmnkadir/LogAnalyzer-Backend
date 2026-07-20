@@ -1,5 +1,6 @@
 package com.example.backend.controller;
 
+import com.example.backend.dto.ApiResponse;
 import com.example.backend.entity.LogRecord;
 import com.example.backend.entity.User;
 import com.example.backend.repository.LogRecordRepository;
@@ -27,32 +28,29 @@ public class AiController {
     }
 
     @GetMapping("/test")
-    public ResponseEntity<String> testGemini(@RequestParam("soru") String soru) {
+    public ResponseEntity<ApiResponse<String>> testGemini(@RequestParam("soru") String soru) {
         String cevap = aiService.askAi(soru);
-        return ResponseEntity.ok(cevap);
+        return ResponseEntity.ok(ApiResponse.success(cevap, "AI Yanıtı başarılı"));
     }
 
     @GetMapping("/analyze-session/{sessionId}")
-    public ResponseEntity<String> analyzeSession(@PathVariable String sessionId, Principal principal) {
+    public ResponseEntity<ApiResponse<String>> analyzeSession(@PathVariable String sessionId, Principal principal) {
         try {
             User currentUser = userRepository.findByUsername(principal.getName()).orElseThrow();
 
-            // Sadece ilgili oturuma ait HATA ve UYARI loglarını çekiyoruz (Token tasarrufu için INFO'ları eliyoruz)
             List<LogRecord> criticalLogs = logRecordRepository.findByUserAndUploadSessionId(currentUser, sessionId)
                     .stream()
                     .filter(log -> "ERROR".equals(log.getLogLevel()) || "WARN".equals(log.getLogLevel()))
                     .collect(Collectors.toList());
 
             if (criticalLogs.isEmpty()) {
-                return ResponseEntity.ok("Bu oturumda kritik bir hata (ERROR/WARN) bulunamadı. Sistem sağlıklı görünüyor.");
+                return ResponseEntity.ok(ApiResponse.success("Bu oturumda kritik bir hata (ERROR/WARN) bulunamadı. Sistem sağlıklı görünüyor.", "Durum İyi"));
             }
 
-            // Logları tek bir metin bloğu haline getiriyoruz
             String logTexts = criticalLogs.stream()
                     .map(LogRecord::getMessage)
                     .collect(Collectors.joining("\n"));
 
-            // Prompt Engineering: Olay Raporu (Incident Report) formatı dayatıyoruz
             String prompt = "Sen uzman bir DevOps ve Sistem Yöneticisisin. " +
                     "Aşağıdaki logları analiz et ve bana profesyonel bir olay raporu hazırla. " +
                     "ÇOK ÖNEMLİ KURAL: Cevabın %100 düzgün, gramer kurallarına uygun TÜRKÇE olmalıdır. " +
@@ -69,12 +67,11 @@ public class AiController {
                     "[Buraya çözüm önerilerini maddeler halinde yaz]\n\n" +
                     "İşte analiz edilecek loglar:\n" + logTexts;
 
-            // Llama 3.3 modeline gönder ve sonucu dön
             String aiResponse = aiService.askAi(prompt);
-            return ResponseEntity.ok(aiResponse);
+            return ResponseEntity.ok(ApiResponse.success(aiResponse, "Analiz Tamamlandı"));
 
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("Analiz sırasında bir hata oluştu: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error("Analiz sırasında bir hata oluştu: " + e.getMessage()));
         }
     }
 }

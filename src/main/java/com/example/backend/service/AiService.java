@@ -19,7 +19,7 @@ public class AiService {
     @Value("${groq.api.key}")
     private String apiKey;
 
-    // OpenAI yerine Groq'un API adresini kullanıyoruz
+    // Groq'un API adresini kullanıyoruz
     private final String API_URL = "https://api.groq.com/openai/v1/chat/completions";
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -36,7 +36,7 @@ public class AiService {
             );
 
             Map<String, Object> requestBodyMap = Map.of(
-                    "model", "llama-3.3-70b-versatile", // güncel Llama 3.3'ü bağladık
+                    "model", "llama-3.3-70b-versatile", // Llama 3.3'ü bağladık
                     "messages", List.of(message)
             );
 
