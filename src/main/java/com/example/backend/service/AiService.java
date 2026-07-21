@@ -30,14 +30,20 @@ public class AiService {
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.setBearerAuth(apiKey);
 
-            Map<String, String> message = Map.of(
+            Map<String, String> systemMessage = Map.of(
+                    "role", "system",
+                    "content", "Sen uzman bir yazılım mühendisisin. Tüm yanıtlarını TÜRKÇE olarak vermelisin. 'Initialize', 'Reference', 'Null' gibi teknik terimleri doğrudan İngilizce olarak bırakabilirsin. KESİNLİKLE sadece Latin alfabesi kullan. Başka alfabeler (Asya dilleri vs.) kullanmak kesinlikle yasaktır."
+            );
+
+            Map<String, String> userMessage = Map.of(
                     "role", "user",
                     "content", prompt
             );
 
             Map<String, Object> requestBodyMap = Map.of(
-                    "model", "llama-3.3-70b-versatile", // Llama 3.3'ü bağladık
-                    "messages", List.of(message)
+                    "model", "llama-3.3-70b-versatile", // Gemma kaldırıldığı için Llama 3.3'e dönüyoruz
+                    "messages", List.of(systemMessage, userMessage),
+                    "temperature", 0.1 // Halüsinasyonları engellemek için yaratıcılığı kıstık
             );
 
             String requestBody = objectMapper.writeValueAsString(requestBodyMap);
@@ -48,7 +54,6 @@ public class AiService {
             // Json ayrıştırma mantığı OpenAI ile tamamen aynı
             JsonNode rootNode = objectMapper.readTree(response.getBody());
             return rootNode.path("choices").get(0).path("message").path("content").asText();
-
         } catch (Exception e) {
             return "Groq servisine ulaşılamadı: " + e.getMessage();
         }

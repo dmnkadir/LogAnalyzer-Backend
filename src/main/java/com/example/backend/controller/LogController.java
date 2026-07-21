@@ -56,7 +56,16 @@ public class LogController {
     }
 
     @GetMapping("/session/{sessionId}")
-    public ResponseEntity<ApiResponse<List<LogRecord>>> getLogsBySession(@PathVariable("sessionId") String sessionId, Principal principal) {
-        return ResponseEntity.ok(ApiResponse.success(logService.getLogsBySession(principal.getName(), sessionId), "Oturum logları getirildi"));
+    public ResponseEntity<ApiResponse<List<LogRecord>>> getLogsBySession(
+            @PathVariable String sessionId,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String level,
+            Principal principal) {
+        try {
+            List<LogRecord> logs = logService.searchAndFilterLogs(principal.getName(), sessionId, keyword, level);
+            return ResponseEntity.ok(ApiResponse.success(logs, "Loglar başarıyla getirildi"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Loglar getirilirken hata oluştu: " + e.getMessage()));
+        }
     }
 }

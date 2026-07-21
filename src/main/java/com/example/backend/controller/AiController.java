@@ -51,11 +51,8 @@ public class AiController {
                     .map(LogRecord::getMessage)
                     .collect(Collectors.joining("\n"));
 
-            String prompt = "Sen uzman bir DevOps ve Sistem Yöneticisisin. " +
-                    "Aşağıdaki logları analiz et ve bana profesyonel bir olay raporu hazırla. " +
-                    "ÇOK ÖNEMLİ KURAL: Cevabın %100 düzgün, gramer kurallarına uygun TÜRKÇE olmalıdır. " +
-                    "Kesinlikle Vietnamca, İngilizce veya başka bir dilden harf, kelime veya ek kullanma. " +
-                    "Uydurma kelimeler veya melez diller yaratma. Sadece standart Türk alfabesini kullan.\n\n" +
+            String prompt = "Aşağıdaki logları analiz et ve bana profesyonel bir olay raporu hazırla. " +
+                    "Tüm rapor SADECE TÜRKÇE olmalıdır.\n\n" +
                     "Lütfen raporu aşağıdaki Markdown formatında ver:\n\n" +
                     "### 1. Genel Özet\n" +
                     "[Buraya logların genel durumunu yaz]\n\n" +

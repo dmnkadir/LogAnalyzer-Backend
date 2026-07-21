@@ -23,14 +23,21 @@ public class LogRecord {
     @Column(columnDefinition = "TEXT")
     private String message; // Logun tam metni
 
-    private String exceptionType; // Eğer hata satırıyysa NullPointerException vb. buraya gelecek
+    private String exceptionType; // NullPointerException vb.
 
-    private LocalDateTime createdAt = LocalDateTime.now(); // Logun kaydedilme zamanı
+    @Column(name = "log_timestamp")
+    private LocalDateTime logTimestamp; // Logun dosyadaki asıl gerçekleşme zamanı
+
+    private String className; // Hatayı fırlatan sınıf (örn: UserService)
+
+    private String packageName; // Sınıfın bulunduğu paket (örn: com.example.service)
+
+    private LocalDateTime createdAt = LocalDateTime.now(); // Veritabanına kayıt zamanı
 
     @ManyToOne
     @JoinColumn(name = "user_id", nullable = false)
     private com.example.backend.entity.User user;
-    
+
     @Column(name = "upload_session_id")
     private String uploadSessionId;
 }
