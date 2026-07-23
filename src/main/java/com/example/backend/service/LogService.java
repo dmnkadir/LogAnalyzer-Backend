@@ -24,10 +24,8 @@ public class LogService {
     private final LogRecordRepository logRecordRepository;
     private final UserRepository userRepository;
 
-    // Kütüphanesiz, raw regex ile kendi ayrıştırıcı (parser) kalıplarımız
     private static final Pattern EXCEPTION_PATTERN = Pattern.compile("\\b(\\w+(?:Exception|Error))\\b");
     private static final Pattern DATE_PATTERN = Pattern.compile("(\\d{4}-\\d{2}-\\d{2}[T\\s]\\d{2}:\\d{2}:\\d{2})");
-    // (?:...) yapısı ile grubu yakalamadan sadece paket ve sınıf isimlerini ayıklıyoruz
     private static final Pattern CLASS_PATTERN = Pattern.compile("([a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)*)\\.([A-Z][a-zA-Z0-9_]*)");
 
     public LogService(LogRecordRepository logRecordRepository, UserRepository userRepository) {
@@ -62,29 +60,24 @@ public class LogService {
                 record.setUser(currentUser);
                 record.setUploadSessionId(sessionId);
 
-                // Exception Türü Ayıklama
                 Matcher exMatcher = EXCEPTION_PATTERN.matcher(line);
                 if (exMatcher.find()) {
                     record.setExceptionType(exMatcher.group(1));
                 }
 
-                // Zaman Damgası (Timestamp) Ayıklama
                 Matcher dateMatcher = DATE_PATTERN.matcher(line);
                 if (dateMatcher.find()) {
-                    String dateStr = dateMatcher.group(1).replace("T", " "); // Standartlaştırma
+                    String dateStr = dateMatcher.group(1).replace("T", " ");
                     try {
                         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
                         record.setLogTimestamp(LocalDateTime.parse(dateStr, formatter));
-                    } catch (DateTimeParseException ignored) {
-                        // Parse edilemezse veritabanına null gider, sistemi çökertmez
-                    }
+                    } catch (DateTimeParseException ignored) {}
                 }
 
-                // Sınıf ve Paket İsmi Ayıklama
                 Matcher classMatcher = CLASS_PATTERN.matcher(line);
                 if (classMatcher.find()) {
-                    record.setPackageName(classMatcher.group(1)); // com.example.service
-                    record.setClassName(classMatcher.group(2));   // LogService
+                    record.setPackageName(classMatcher.group(1));
+                    record.setClassName(classMatcher.group(2));
                 }
 
                 logRecordRepository.save(record);
@@ -105,34 +98,54 @@ public class LogService {
     public LogStatsResponse getLogStats(String username) {
         User user = getUser(username);
 
+        // 1. Temel Sayımlar (Bunlar her zaman sorunsuz çalışır)
         long total = logRecordRepository.countByUser(user);
         long error = logRecordRepository.countByUserAndLogLevel(user, "ERROR");
         long warn = logRecordRepository.countByUserAndLogLevel(user, "WARN");
         long info = logRecordRepository.countByUserAndLogLevel(user, "INFO");
         long debug = logRecordRepository.countByUserAndLogLevel(user, "DEBUG");
 
-        // Yeni Detaylı Analiz Verileri
-        String mostFreqEx = logRecordRepository.findMostFrequentException(user);
-        String mostErrorClass = logRecordRepository.findMostErrorProneClass(user);
-        LocalDateTime firstErr = logRecordRepository.findFirstErrorTime(user);
-        LocalDateTime lastErr = logRecordRepository.findLastErrorTime(user);
+        String mostFreqEx = null;
+        String mostErrorClass = null;
+        LocalDateTime firstErr = null;
+        LocalDateTime lastErr = null;
 
-        // Hepsini tek bir DTO içinde paketleyip yolluyoruz
+        // 2. Gelişmiş Sorgular (Hata fırlatma ihtimaline karşı KORUMAYA ALINDI)
+        try {
+            mostFreqEx = logRecordRepository.findMostFrequentException(user);
+        } catch (Exception e) {
+            System.err.println("Uyarı: En sık görülen exception sorgusu başarısız oldu.");
+        }
+
+        try {
+            mostErrorClass = logRecordRepository.findMostErrorProneClass(user);
+        } catch (Exception e) {
+            System.err.println("Uyarı: En hatalı sınıf sorgusu başarısız oldu.");
+        }
+
+        try {
+            firstErr = logRecordRepository.findFirstErrorTime(user);
+        } catch (Exception e) {
+            System.err.println("Uyarı: İlk hata zamanı sorgusu başarısız oldu.");
+        }
+
+        try {
+            lastErr = logRecordRepository.findLastErrorTime(user);
+        } catch (Exception e) {
+            System.err.println("Uyarı: Son hata zamanı sorgusu başarısız oldu.");
+        }
+
         return new LogStatsResponse(total, error, warn, info, debug, mostFreqEx, mostErrorClass, firstErr, lastErr);
     }
 
-    //  Arama ve Filtreleme
     public List<LogRecord> searchAndFilterLogs(String username, String sessionId, String keyword, String level) {
         User user = getUser(username);
 
         if (keyword != null && !keyword.isEmpty()) {
-            // Kelime araması yapılmışsa
             return logRecordRepository.searchLogsByKeyword(user, sessionId, keyword);
         } else if (level != null && !level.isEmpty()) {
-            // Sadece belirli bir seviye (ERROR, WARN) seçilmişse
             return logRecordRepository.findByUserAndUploadSessionIdAndLogLevel(user, sessionId, level.toUpperCase());
         } else {
-            // Hiçbir filtre yoksa oturumun tüm loglarını dön
             return logRecordRepository.findByUserAndUploadSessionId(user, sessionId);
         }
     }
