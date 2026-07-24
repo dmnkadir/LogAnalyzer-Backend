@@ -1,11 +1,14 @@
 package com.example.backend.controller;
 
 import com.example.backend.dto.ApiResponse;
+import com.example.backend.dto.DummyLogRequest; // EKLENDİ
 import com.example.backend.entity.LogRecord;
 import com.example.backend.entity.User;
 import com.example.backend.repository.LogRecordRepository;
 import com.example.backend.repository.UserRepository;
 import com.example.backend.service.AiService;
+import com.example.backend.service.DummyLogGeneratorService; // EKLENDİ
+import org.springframework.http.HttpStatus; // EKLENDİ
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,11 +23,14 @@ public class AiController {
     private final AiService aiService;
     private final LogRecordRepository logRecordRepository;
     private final UserRepository userRepository;
+    private final DummyLogGeneratorService dummyService;
 
-    public AiController(AiService aiService, LogRecordRepository logRecordRepository, UserRepository userRepository) {
+    // DÜZELTME: dummyService constructor'a eklendi
+    public AiController(AiService aiService, LogRecordRepository logRecordRepository, UserRepository userRepository, DummyLogGeneratorService dummyService) {
         this.aiService = aiService;
         this.logRecordRepository = logRecordRepository;
         this.userRepository = userRepository;
+        this.dummyService = dummyService;
     }
 
     @GetMapping("/test")
@@ -69,6 +75,18 @@ public class AiController {
 
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(ApiResponse.error("Analiz sırasında bir hata oluştu: " + e.getMessage()));
+        }
+    }
+
+    // DÜZELTME: ApiResponse kullanımı sınıfın geri kalanıyla (success/error metotlarıyla) standart hale getirildi
+    @PostMapping("/generate-dummy")
+    public ResponseEntity<ApiResponse<String>> generateDummyLog(@RequestBody DummyLogRequest request) {
+        try {
+            String generatedLogs = dummyService.generateDummyLogs(request);
+            return ResponseEntity.ok(ApiResponse.success(generatedLogs, "Sahte loglar başarıyla üretildi"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Log üretilirken bir hata oluştu: " + e.getMessage()));
         }
     }
 }
