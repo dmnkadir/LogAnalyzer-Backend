@@ -6,25 +6,21 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
 @Repository
 public interface LogRecordRepository extends JpaRepository<LogRecord, Long> {
 
-    // Sadece istek atan kullanıcının loglarını getirir
     List<LogRecord> findByUser(User user);
     List<LogRecord> findByUserAndLogLevel(User user, String logLevel);
-
-    // Sadece o kullanıcının istatistiklerini hesaplar
     long countByUser(User user);
     long countByUserAndLogLevel(User user, String logLevel);
-
-    // Belirli bir oturuma ve kullanıcıya ait logları getirir
     List<LogRecord> findByUserAndUploadSessionId(User user, String uploadSessionId);
 
-    // Kullanıcıya ait benzersiz oturum ID'lerini ve ilk yükleme tarihlerini (en eski kayıt zamanı) getirir
-    @Query(value = "SELECT l.upload_session_id AS sessionId, MIN(l.created_at) AS uploadDate " +
+    @Query(value = "SELECT l.upload_session_id AS sessionId, MIN(l.created_at) AS uploadDate, MAX(l.session_name) AS sessionName " +
             "FROM log_records l " +
             "WHERE l.user_id = :#{#user.id} AND l.upload_session_id IS NOT NULL " +
             "GROUP BY l.upload_session_id " +
@@ -38,28 +34,71 @@ public interface LogRecordRepository extends JpaRepository<LogRecord, Long> {
 
         @com.fasterxml.jackson.annotation.JsonProperty("uploadDate")
         java.time.LocalDateTime getUploadDate();
+
+        @com.fasterxml.jackson.annotation.JsonProperty("sessionName")
+        String getSessionName();
     }
 
-
-    // Keyword (Anahtar Kelime) ile arama algoritması
     @Query("SELECT l FROM LogRecord l WHERE l.user = :user AND l.uploadSessionId = :sessionId AND LOWER(l.message) LIKE LOWER(CONCAT('%', :keyword, '%'))")
     List<LogRecord> searchLogsByKeyword(@Param("user") User user, @Param("sessionId") String sessionId, @Param("keyword") String keyword);
 
-    // Oturum bazlı seviye (INFO, ERROR vs.) filtresi
     List<LogRecord> findByUserAndUploadSessionIdAndLogLevel(User user, String sessionId, String logLevel);
 
-    // En Çok Görülen Exception
     @Query("SELECT l.exceptionType FROM LogRecord l WHERE l.user = :user AND l.exceptionType IS NOT NULL GROUP BY l.exceptionType ORDER BY COUNT(l.id) DESC LIMIT 1")
     String findMostFrequentException(@Param("user") User user);
 
-    // En Çok Hata Üreten Sınıf (Sadece ERROR seviyesine bakarak)
     @Query("SELECT l.className FROM LogRecord l WHERE l.user = :user AND l.logLevel = 'ERROR' AND l.className IS NOT NULL GROUP BY l.className ORDER BY COUNT(l.id) DESC LIMIT 1")
     String findMostErrorProneClass(@Param("user") User user);
 
-    // İlk ve Son Hata Zamanını Bulma (logTimestamp kullanarak)
     @Query("SELECT MIN(l.logTimestamp) FROM LogRecord l WHERE l.user = :user AND l.logLevel = 'ERROR'")
     java.time.LocalDateTime findFirstErrorTime(@Param("user") User user);
 
     @Query("SELECT MAX(l.logTimestamp) FROM LogRecord l WHERE l.user = :user AND l.logLevel = 'ERROR'")
     java.time.LocalDateTime findLastErrorTime(@Param("user") User user);
+
+
+    // Birden fazla oturuma ait logları getirme
+    @Query("SELECT l FROM LogRecord l WHERE l.user = :user AND l.uploadSessionId IN :sessionIds")
+    List<LogRecord> findByUserAndUploadSessionIdIn(@Param("user") User user, @Param("sessionIds") List<String> sessionIds);
+
+    // Frontend tablosu için çoklu oturum filtreleme (Arama kelimesi ve Seviye)
+    @Query("SELECT l FROM LogRecord l WHERE l.user = :user AND l.uploadSessionId IN :sessionIds " +
+            "AND (:keyword IS NULL OR :keyword = '' OR LOWER(l.message) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
+            "AND (:level IS NULL OR :level = '' OR l.logLevel = :level)")
+    List<LogRecord> findFilteredLogs(@Param("user") User user, @Param("sessionIds") List<String> sessionIds, @Param("keyword") String keyword, @Param("level") String level);
+
+    // İstatistikler: Seviye bazlı sayım
+    @Query("SELECT COUNT(l) FROM LogRecord l WHERE l.user = :user AND l.uploadSessionId IN :sessionIds AND l.logLevel = :level")
+    long countByLevelAndSessionIds(@Param("user") User user, @Param("sessionIds") List<String> sessionIds, @Param("level") String level);
+
+    // İstatistikler: Toplam sayım
+    @Query("SELECT COUNT(l) FROM LogRecord l WHERE l.user = :user AND l.uploadSessionId IN :sessionIds")
+    long countTotalBySessionIds(@Param("user") User user, @Param("sessionIds") List<String> sessionIds);
+
+    // İstatistikler: En çok görülen Exception
+    @Query("SELECT l.exceptionType FROM LogRecord l WHERE l.user = :user AND l.uploadSessionId IN :sessionIds AND l.exceptionType IS NOT NULL GROUP BY l.exceptionType ORDER BY COUNT(l.id) DESC LIMIT 1")
+    String findMostFrequentExceptionBySessionIds(@Param("user") User user, @Param("sessionIds") List<String> sessionIds);
+
+    // İstatistikler: En hatalı sınıf
+    @Query("SELECT l.className FROM LogRecord l WHERE l.user = :user AND l.uploadSessionId IN :sessionIds AND l.logLevel = 'ERROR' AND l.className IS NOT NULL GROUP BY l.className ORDER BY COUNT(l.id) DESC LIMIT 1")
+    String findMostErrorProneClassBySessionIds(@Param("user") User user, @Param("sessionIds") List<String> sessionIds);
+
+    // İstatistikler: İlk hata
+    @Query("SELECT MIN(l.logTimestamp) FROM LogRecord l WHERE l.user = :user AND l.uploadSessionId IN :sessionIds AND l.logLevel = 'ERROR'")
+    java.time.LocalDateTime findFirstErrorTimeBySessionIds(@Param("user") User user, @Param("sessionIds") List<String> sessionIds);
+
+    // İstatistikler: Son hata
+    @Query("SELECT MAX(l.logTimestamp) FROM LogRecord l WHERE l.user = :user AND l.uploadSessionId IN :sessionIds AND l.logLevel = 'ERROR'")
+    java.time.LocalDateTime findLastErrorTimeBySessionIds(@Param("user") User user, @Param("sessionIds") List<String> sessionIds);
+
+    @Modifying
+    @Transactional
+    @Query("UPDATE LogRecord l SET l.sessionName = :newName WHERE l.uploadSessionId = :sessionId AND l.user = :user")
+    void updateSessionName(@Param("user") User user, @Param("sessionId") String sessionId, @Param("newName") String newName);
+
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM LogRecord l WHERE l.uploadSessionId = :sessionId AND l.user = :user")
+    void deleteByUploadSessionIdAndUser(@Param("sessionId") String sessionId, @Param("user") User user);
+
 }

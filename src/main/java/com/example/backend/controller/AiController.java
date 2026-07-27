@@ -1,14 +1,14 @@
 package com.example.backend.controller;
 
 import com.example.backend.dto.ApiResponse;
-import com.example.backend.dto.DummyLogRequest; // EKLENDİ
+import com.example.backend.dto.DummyLogRequest;
 import com.example.backend.entity.LogRecord;
 import com.example.backend.entity.User;
 import com.example.backend.repository.LogRecordRepository;
 import com.example.backend.repository.UserRepository;
 import com.example.backend.service.AiService;
-import com.example.backend.service.DummyLogGeneratorService; // EKLENDİ
-import org.springframework.http.HttpStatus; // EKLENDİ
+import com.example.backend.service.DummyLogGeneratorService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,7 +25,6 @@ public class AiController {
     private final UserRepository userRepository;
     private final DummyLogGeneratorService dummyService;
 
-    // DÜZELTME: dummyService constructor'a eklendi
     public AiController(AiService aiService, LogRecordRepository logRecordRepository, UserRepository userRepository, DummyLogGeneratorService dummyService) {
         this.aiService = aiService;
         this.logRecordRepository = logRecordRepository;
@@ -39,25 +38,27 @@ public class AiController {
         return ResponseEntity.ok(ApiResponse.success(cevap, "AI Yanıtı başarılı"));
     }
 
-    @GetMapping("/analyze-session/{sessionId}")
-    public ResponseEntity<ApiResponse<String>> analyzeSession(@PathVariable String sessionId, Principal principal) {
+    //  Artık PathVariable olarak tek bir String değil, bir List alıyor.
+    @GetMapping("/analyze-session/{sessionIds}")
+    public ResponseEntity<ApiResponse<String>> analyzeSession(@PathVariable List<String> sessionIds, Principal principal) {
         try {
             User currentUser = userRepository.findByUsername(principal.getName()).orElseThrow();
 
-            List<LogRecord> criticalLogs = logRecordRepository.findByUserAndUploadSessionId(currentUser, sessionId)
+            // Sadece seçili oturum ID'lerinin içindeki ERROR ve WARN logları getirilir
+            List<LogRecord> criticalLogs = logRecordRepository.findByUserAndUploadSessionIdIn(currentUser, sessionIds)
                     .stream()
                     .filter(log -> "ERROR".equals(log.getLogLevel()) || "WARN".equals(log.getLogLevel()))
                     .collect(Collectors.toList());
 
             if (criticalLogs.isEmpty()) {
-                return ResponseEntity.ok(ApiResponse.success("Bu oturumda kritik bir hata (ERROR/WARN) bulunamadı. Sistem sağlıklı görünüyor.", "Durum İyi"));
+                return ResponseEntity.ok(ApiResponse.success("Seçilen oturumlarda kritik bir hata (ERROR/WARN) bulunamadı. Sistem sağlıklı görünüyor.", "Durum İyi"));
             }
 
             String logTexts = criticalLogs.stream()
                     .map(LogRecord::getMessage)
                     .collect(Collectors.joining("\n"));
 
-            String prompt = "Aşağıdaki logları analiz et ve bana profesyonel bir olay raporu hazırla. " +
+            String prompt = "Aşağıdaki logları analiz et ve bana profesyonel bir olay raporu (Incident Report) hazırla. " +
                     "Tüm rapor SADECE TÜRKÇE olmalıdır.\n\n" +
                     "Lütfen raporu aşağıdaki Markdown formatında ver:\n\n" +
                     "### 1. Genel Özet\n" +
@@ -78,12 +79,11 @@ public class AiController {
         }
     }
 
-    // DÜZELTME: ApiResponse kullanımı sınıfın geri kalanıyla (success/error metotlarıyla) standart hale getirildi
     @PostMapping("/generate-dummy")
-    public ResponseEntity<ApiResponse<String>> generateDummyLog(@RequestBody DummyLogRequest request) {
+    public ResponseEntity<ApiResponse<String>> generateDummyLog(@RequestBody DummyLogRequest request, Principal principal) {
         try {
-            String generatedLogs = dummyService.generateDummyLogs(request);
-            return ResponseEntity.ok(ApiResponse.success(generatedLogs, "Sahte loglar başarıyla üretildi"));
+            String newSessionId = dummyService.generateAndSaveDummyLogs(request, principal.getName());
+            return ResponseEntity.ok(ApiResponse.success(newSessionId, "Sahte loglar başarıyla üretildi ve kaydedildi"));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(ApiResponse.error("Log üretilirken bir hata oluştu: " + e.getMessage()));

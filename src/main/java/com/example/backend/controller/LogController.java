@@ -40,14 +40,25 @@ public class LogController {
         return ResponseEntity.ok(ApiResponse.success(logService.getAllLogs(principal.getName()), "Loglar getirildi"));
     }
 
-    @GetMapping("/filter")
-    public ResponseEntity<ApiResponse<List<LogRecord>>> getLogsByLevel(@RequestParam("level") String level, Principal principal) {
-        return ResponseEntity.ok(ApiResponse.success(logService.getLogsByLevel(principal.getName(), level), "Filtrelenmiş loglar getirildi"));
+    // Eğer sessionIds gelirse o oturumların, gelmezse tüm oturumların istatistiklerini getir
+    @GetMapping("/stats")
+    public ResponseEntity<ApiResponse<LogStatsResponse>> getLogStats(@RequestParam(required = false) List<String> sessionIds, Principal principal) {
+        if (sessionIds != null && !sessionIds.isEmpty()) {
+            return ResponseEntity.ok(ApiResponse.success(logService.getStatsForSessions(principal.getName(), sessionIds), "Seçili oturum istatistikleri getirildi"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(logService.getLogStats(principal.getName()), "Genel istatistikler getirildi"));
     }
 
-    @GetMapping("/stats")
-    public ResponseEntity<ApiResponse<LogStatsResponse>> getLogStats(Principal principal) {
-        return ResponseEntity.ok(ApiResponse.success(logService.getLogStats(principal.getName()), "İstatistikler getirildi"));
+    // Frontend'deki tablonun çoklu oturum filtrelemesi için
+    @GetMapping("/filter")
+    public ResponseEntity<ApiResponse<List<LogRecord>>> getFilteredLogs(
+            @RequestParam(required = false) List<String> sessionIds,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String level,
+            Principal principal) {
+
+        List<LogRecord> logs = logService.getFilteredLogs(principal.getName(), sessionIds, keyword, level);
+        return ResponseEntity.ok(ApiResponse.success(logs, "Filtrelenmiş loglar getirildi"));
     }
 
     @GetMapping("/sessions")
@@ -55,6 +66,7 @@ public class LogController {
         return ResponseEntity.ok(ApiResponse.success(logService.getUserSessions(principal.getName()), "Oturumlar getirildi"));
     }
 
+    // Eski tekli oturum çağırma metodu
     @GetMapping("/session/{sessionId}")
     public ResponseEntity<ApiResponse<List<LogRecord>>> getLogsBySession(
             @PathVariable String sessionId,
@@ -68,4 +80,22 @@ public class LogController {
             return ResponseEntity.badRequest().body(ApiResponse.error("Loglar getirilirken hata oluştu: " + e.getMessage()));
         }
     }
+
+    @PutMapping("/session/{sessionId}/name")
+    public ResponseEntity<ApiResponse<String>> updateSessionName(
+            @PathVariable String sessionId,
+            @RequestParam String newName,
+            Principal principal) {
+        logService.updateSessionName(principal.getName(), sessionId, newName);
+        return ResponseEntity.ok(ApiResponse.success(null, "Oturum ismi başarıyla güncellendi"));
+    }
+
+    @DeleteMapping("/session/{sessionId}")
+    public ResponseEntity<ApiResponse<String>> deleteSession(
+            @PathVariable String sessionId,
+            Principal principal) {
+        logService.deleteSession(principal.getName(), sessionId);
+        return ResponseEntity.ok(ApiResponse.success(null, "Oturum ve ait olduğu tüm loglar başarıyla silindi"));
+    }
+
 }

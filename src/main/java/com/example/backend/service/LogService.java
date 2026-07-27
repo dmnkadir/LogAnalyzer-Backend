@@ -98,49 +98,24 @@ public class LogService {
     public LogStatsResponse getLogStats(String username) {
         User user = getUser(username);
 
-        // 1. Temel Sayımlar (Bunlar her zaman sorunsuz çalışır)
         long total = logRecordRepository.countByUser(user);
         long error = logRecordRepository.countByUserAndLogLevel(user, "ERROR");
         long warn = logRecordRepository.countByUserAndLogLevel(user, "WARN");
         long info = logRecordRepository.countByUserAndLogLevel(user, "INFO");
         long debug = logRecordRepository.countByUserAndLogLevel(user, "DEBUG");
 
-        String mostFreqEx = null;
-        String mostErrorClass = null;
-        LocalDateTime firstErr = null;
-        LocalDateTime lastErr = null;
+        String mostFreqEx = null; String mostErrorClass = null; LocalDateTime firstErr = null; LocalDateTime lastErr = null;
 
-        // 2. Gelişmiş Sorgular (Hata fırlatma ihtimaline karşı KORUMAYA ALINDI)
-        try {
-            mostFreqEx = logRecordRepository.findMostFrequentException(user);
-        } catch (Exception e) {
-            System.err.println("Uyarı: En sık görülen exception sorgusu başarısız oldu.");
-        }
-
-        try {
-            mostErrorClass = logRecordRepository.findMostErrorProneClass(user);
-        } catch (Exception e) {
-            System.err.println("Uyarı: En hatalı sınıf sorgusu başarısız oldu.");
-        }
-
-        try {
-            firstErr = logRecordRepository.findFirstErrorTime(user);
-        } catch (Exception e) {
-            System.err.println("Uyarı: İlk hata zamanı sorgusu başarısız oldu.");
-        }
-
-        try {
-            lastErr = logRecordRepository.findLastErrorTime(user);
-        } catch (Exception e) {
-            System.err.println("Uyarı: Son hata zamanı sorgusu başarısız oldu.");
-        }
+        try { mostFreqEx = logRecordRepository.findMostFrequentException(user); } catch (Exception e) {}
+        try { mostErrorClass = logRecordRepository.findMostErrorProneClass(user); } catch (Exception e) {}
+        try { firstErr = logRecordRepository.findFirstErrorTime(user); } catch (Exception e) {}
+        try { lastErr = logRecordRepository.findLastErrorTime(user); } catch (Exception e) {}
 
         return new LogStatsResponse(total, error, warn, info, debug, mostFreqEx, mostErrorClass, firstErr, lastErr);
     }
 
     public List<LogRecord> searchAndFilterLogs(String username, String sessionId, String keyword, String level) {
         User user = getUser(username);
-
         if (keyword != null && !keyword.isEmpty()) {
             return logRecordRepository.searchLogsByKeyword(user, sessionId, keyword);
         } else if (level != null && !level.isEmpty()) {
@@ -157,4 +132,45 @@ public class LogService {
     public List<LogRecord> getLogsBySession(String username, String sessionId) {
         return logRecordRepository.findByUserAndUploadSessionId(getUser(username), sessionId);
     }
+
+
+
+    public LogStatsResponse getStatsForSessions(String username, List<String> sessionIds) {
+        if (sessionIds == null || sessionIds.isEmpty()) {
+            return new LogStatsResponse(0L, 0L, 0L, 0L, 0L, null, null, null, null);
+        }
+        User user = getUser(username);
+
+        long total = logRecordRepository.countTotalBySessionIds(user, sessionIds);
+        long error = logRecordRepository.countByLevelAndSessionIds(user, sessionIds, "ERROR");
+        long warn = logRecordRepository.countByLevelAndSessionIds(user, sessionIds, "WARN");
+        long info = logRecordRepository.countByLevelAndSessionIds(user, sessionIds, "INFO");
+        long debug = logRecordRepository.countByLevelAndSessionIds(user, sessionIds, "DEBUG");
+
+        String mostFreqEx = null; String mostErrorClass = null; LocalDateTime firstErr = null; LocalDateTime lastErr = null;
+        try { mostFreqEx = logRecordRepository.findMostFrequentExceptionBySessionIds(user, sessionIds); } catch (Exception e) {}
+        try { mostErrorClass = logRecordRepository.findMostErrorProneClassBySessionIds(user, sessionIds); } catch (Exception e) {}
+        try { firstErr = logRecordRepository.findFirstErrorTimeBySessionIds(user, sessionIds); } catch (Exception e) {}
+        try { lastErr = logRecordRepository.findLastErrorTimeBySessionIds(user, sessionIds); } catch (Exception e) {}
+
+        return new LogStatsResponse(total, error, warn, info, debug, mostFreqEx, mostErrorClass, firstErr, lastErr);
+    }
+
+    public List<LogRecord> getFilteredLogs(String username, List<String> sessionIds, String keyword, String level) {
+        if (sessionIds == null || sessionIds.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        return logRecordRepository.findFilteredLogs(getUser(username), sessionIds, keyword, level);
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void updateSessionName(String username, String sessionId, String newName) {
+        logRecordRepository.updateSessionName(getUser(username), sessionId, newName);
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void deleteSession(String username, String sessionId) {
+        logRecordRepository.deleteByUploadSessionIdAndUser(sessionId, getUser(username));
+    }
+
 }

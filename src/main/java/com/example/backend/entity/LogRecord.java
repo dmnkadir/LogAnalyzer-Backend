@@ -40,4 +40,7 @@ public class LogRecord {
 
     @Column(name = "upload_session_id")
     private String uploadSessionId;
+
+    @Column(name = "session_name")
+    private String sessionName;
 }
