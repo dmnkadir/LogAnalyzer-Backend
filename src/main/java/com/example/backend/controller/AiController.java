@@ -38,7 +38,6 @@ public class AiController {
         return ResponseEntity.ok(ApiResponse.success(cevap, "AI Yanıtı başarılı"));
     }
 
-    //  Artık PathVariable olarak tek bir String değil, bir List alıyor.
     @GetMapping("/analyze-session/{sessionIds}")
     public ResponseEntity<ApiResponse<String>> analyzeSession(@PathVariable List<String> sessionIds, Principal principal) {
         try {
@@ -58,18 +57,23 @@ public class AiController {
                     .map(LogRecord::getMessage)
                     .collect(Collectors.joining("\n"));
 
-            String prompt = "Aşağıdaki logları analiz et ve bana profesyonel bir olay raporu (Incident Report) hazırla. " +
+            // Çok daha yapılandırılmış, Markdown uyumlu ve detaylı
+            String prompt = "Sen uzman bir DevOps ve Sistem Yöneticisisin. Aşağıdaki logları analiz et ve bana profesyonel bir olay raporu (Incident Report) hazırla. " +
                     "Tüm rapor SADECE TÜRKÇE olmalıdır.\n\n" +
-                    "Lütfen raporu aşağıdaki Markdown formatında ver:\n\n" +
+                    "Lütfen raporu AŞAĞIDAKİ MARKDOWN FORMATINA BİREBİR UYARAK ver:\n\n" +
                     "### 1. Genel Özet\n" +
-                    "[Buraya logların genel durumunu yaz]\n\n" +
-                    "### 2. Olası Kök Neden (Root Cause)\n" +
-                    "[Buraya hatanın temel sebebini yaz]\n\n" +
-                    "### 3. Kritik Hatalar\n" +
-                    "[Buraya hataları maddeler halinde yaz]\n\n" +
-                    "### 4. Çözüm Adımları\n" +
-                    "[Buraya çözüm önerilerini maddeler halinde yaz]\n\n" +
-                    "İşte analiz edilecek loglar:\n" + logTexts;
+                    "[Sistemde tam olarak ne yaşandığına dair 2-3 cümlelik net bir özet]\n\n" +
+                    "### 2. Risk Seviyesi\n" +
+                    "**[Sadece şu kelimelerden BİRİNİ yaz: KRİTİK, YÜKSEK, ORTA, DÜŞÜK]**\n\n" +
+                    "### 3. Olası Kök Neden (Root Cause)\n" +
+                    "[Hatanın teknik ve temel sebebi]\n\n" +
+                    "### 4. Kritik Hatalar ve Etkilenen Servisler\n" +
+                    "- **[Hata Adı/Exception]**: [Hatanın açıklaması] *(Etkilenen Sınıf: [Sınıf/Paket adı])*\n" +
+                    "- ...\n\n" +
+                    "### 5. Çözüm Adımları\n" +
+                    "1. [İlk adım]\n" +
+                    "2. [İkinci adım]\n\n" +
+                    "İşte analiz edilecek kritik loglar:\n" + logTexts;
 
             String aiResponse = aiService.askAi(prompt);
             return ResponseEntity.ok(ApiResponse.success(aiResponse, "Analiz Tamamlandı"));
