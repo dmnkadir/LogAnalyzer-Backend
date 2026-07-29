@@ -2,6 +2,7 @@ package com.example.backend.controller;
 
 import com.example.backend.dto.ApiResponse;
 import com.example.backend.dto.DummyLogRequest;
+import com.example.backend.dto.ExceptionExplainRequest;
 import com.example.backend.entity.LogRecord;
 import com.example.backend.entity.User;
 import com.example.backend.repository.LogRecordRepository;
@@ -43,7 +44,6 @@ public class AiController {
         try {
             User currentUser = userRepository.findByUsername(principal.getName()).orElseThrow();
 
-            // Sadece seçili oturum ID'lerinin içindeki ERROR ve WARN logları getirilir
             List<LogRecord> criticalLogs = logRecordRepository.findByUserAndUploadSessionIdIn(currentUser, sessionIds)
                     .stream()
                     .filter(log -> "ERROR".equals(log.getLogLevel()) || "WARN".equals(log.getLogLevel()))
@@ -57,7 +57,6 @@ public class AiController {
                     .map(LogRecord::getMessage)
                     .collect(Collectors.joining("\n"));
 
-            // Çok daha yapılandırılmış, Markdown uyumlu ve detaylı
             String prompt = "Sen uzman bir DevOps ve Sistem Yöneticisisin. Aşağıdaki logları analiz et ve bana profesyonel bir olay raporu (Incident Report) hazırla. " +
                     "Tüm rapor SADECE TÜRKÇE olmalıdır.\n\n" +
                     "Lütfen raporu AŞAĞIDAKİ MARKDOWN FORMATINA BİREBİR UYARAK ver:\n\n" +
@@ -91,6 +90,39 @@ public class AiController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(ApiResponse.error("Log üretilirken bir hata oluştu: " + e.getMessage()));
+        }
+    }
+
+    // Tekli Exception Açıklama Servisi
+    @PostMapping("/explain-exception")
+    public ResponseEntity<ApiResponse<String>> explainException(@RequestBody ExceptionExplainRequest request, Principal principal) {
+        try {
+            if (request.getExceptionName() == null || request.getExceptionName().trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(ApiResponse.error("Exception adı boş olamaz."));
+            }
+
+            // AI için özel, süslü bir Markdown şablonu hazırlıyoruz
+            String prompt = "Sen kıdemli bir Yazılım Mimarı ve Sistem Uzmanısın. " +
+                    "Sistem loglarında sıkça karşılaştığımız '" + request.getExceptionName() + "' hatasını yazılım ekibine açıklaman gerekiyor. " +
+                    "Tüm yanıtın SADECE TÜRKÇE olmalıdır. Teknik terimleri (örn: Database, Memory) İngilizce bırakabilirsin.\n\n" +
+                    "Lütfen cevabını SADECE aşağıdaki MARKDOWN formatına BİREBİR uyarak ver (Başka hiçbir giriş cümlesi kurma):\n\n" +
+                    "### Hata Nedir?\n" +
+                    "[Hatanın ne anlama geldiğine dair kısa ve net bir açıklama]\n\n" +
+                    "### Ne Zaman / Neden Oluşur?\n" +
+                    "- [En yaygın 1. sebep]\n" +
+                    "- [En yaygın 2. sebep]\n" +
+                    "- [Varsa 3. sebep]\n\n" +
+                    "### Nasıl Çözülür?\n" +
+                    "1. [İlk ve en etkili çözüm adımı]\n" +
+                    "2. [Alternatif veya ikinci kontrol adımı]\n\n" +
+                    "ÖNEMLİ: Hata isimlerini ve teknik terimleri mutlaka **kalın** (bold) yaz.";
+
+            String aiResponse = aiService.askAi(prompt);
+            return ResponseEntity.ok(ApiResponse.success(aiResponse, "Exception analizi başarıyla tamamlandı."));
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Exception açıklanırken bir hata oluştu: " + e.getMessage()));
         }
     }
 }
