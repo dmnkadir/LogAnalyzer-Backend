@@ -24,7 +24,22 @@ public class AiService {
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * Varsayılan system prompt ile AI'ya soru gönderir.
+     * Mevcut analyze-session, explain-exception gibi servisler bu metodu kullanmaya devam eder.
+     */
     public String askAi(String prompt) {
+        String defaultSystemPrompt = "Sen uzman bir yazılım mühendisisin. Tüm yanıtlarını TÜRKÇE olarak vermelisin. " +
+                "'Initialize', 'Reference', 'Null' gibi teknik terimleri doğrudan İngilizce olarak bırakabilirsin. " +
+                "KESİNLİKLE sadece Latin alfabesi kullan. Başka alfabeler (Asya dilleri vs.) kullanmak kesinlikle yasaktır.";
+        return askAi(defaultSystemPrompt, prompt);
+    }
+
+    /**
+     * Özelleştirilmiş system prompt ile AI'ya soru gönderir.
+     * DummyLogGeneratorService gibi sıkı kısıtlama gerektiren servisler bu overload'u kullanır.
+     */
+    public String askAi(String systemPrompt, String userPrompt) {
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -32,18 +47,18 @@ public class AiService {
 
             Map<String, String> systemMessage = Map.of(
                     "role", "system",
-                    "content", "Sen uzman bir yazılım mühendisisin. Tüm yanıtlarını TÜRKÇE olarak vermelisin. 'Initialize', 'Reference', 'Null' gibi teknik terimleri doğrudan İngilizce olarak bırakabilirsin. KESİNLİKLE sadece Latin alfabesi kullan. Başka alfabeler (Asya dilleri vs.) kullanmak kesinlikle yasaktır."
+                    "content", systemPrompt
             );
 
             Map<String, String> userMessage = Map.of(
                     "role", "user",
-                    "content", prompt
+                    "content", userPrompt
             );
 
             Map<String, Object> requestBodyMap = Map.of(
-                    "model", "llama-3.3-70b-versatile", // Gemma kaldırıldığı için Llama 3.3'e dönüyoruz
+                    "model", "llama-3.3-70b-versatile",
                     "messages", List.of(systemMessage, userMessage),
-                    "temperature", 0.1 // Halüsinasyonları engellemek için yaratıcılığı kıstık
+                    "temperature", 0.1
             );
 
             String requestBody = objectMapper.writeValueAsString(requestBodyMap);
@@ -51,7 +66,6 @@ public class AiService {
             HttpEntity<String> request = new HttpEntity<>(requestBody, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(API_URL, request, String.class);
 
-            // Json ayrıştırma mantığı OpenAI ile tamamen aynı
             JsonNode rootNode = objectMapper.readTree(response.getBody());
             return rootNode.path("choices").get(0).path("message").path("content").asText();
         } catch (Exception e) {

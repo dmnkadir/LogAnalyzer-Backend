@@ -8,11 +8,9 @@ import com.example.backend.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 public class DummyLogGeneratorService {
@@ -20,107 +18,66 @@ public class DummyLogGeneratorService {
     private final AiService aiService;
     private final LogRecordRepository logRecordRepository;
     private final UserRepository userRepository;
+    private final LogService logService;
 
-    // Log ayrıştırmak için özel Regex desenlerimiz
-    private static final Pattern EXCEPTION_PATTERN = Pattern.compile("\\b(\\w+(?:Exception|Error))\\b");
-    private static final Pattern DATE_PATTERN = Pattern.compile("^(\\d{4}-\\d{2}-\\d{2}[T\\s]\\d{2}:\\d{2}:\\d{2})");
-    private static final Pattern CLASS_PATTERN = Pattern.compile("([a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)*)\\.([A-Z][a-zA-Z0-9_]*)");
-
-    public DummyLogGeneratorService(AiService aiService, LogRecordRepository logRecordRepository, UserRepository userRepository) {
+    public DummyLogGeneratorService(AiService aiService, LogRecordRepository logRecordRepository, UserRepository userRepository, LogService logService) {
         this.aiService = aiService;
         this.logRecordRepository = logRecordRepository;
         this.userRepository = userRepository;
+        this.logService = logService;
     }
 
     public String generateAndSaveDummyLogs(DummyLogRequest request, String username) {
-        StringBuilder promptBuilder = new StringBuilder();
-        promptBuilder.append("Sen kıdemli bir DevOps mühendisisin. ");
-
-        promptBuilder.append("Aşağıdaki kurallara KESİNLİKLE uyarak ").append(request.getMinLines())
-                .append(" ile ").append(request.getMaxLines())
-                .append(" satır arasında bir ").append(request.getSystemType()).append(" log dosyası üret.\n");
-
-        promptBuilder.append("Hata Senaryosu: ").append(request.getScenario()).append("\n");
-
-        if (request.getCustomPrompt() != null && !request.getCustomPrompt().isEmpty()) {
-            promptBuilder.append("Ek Detaylar: ").append(request.getCustomPrompt()).append("\n");
-        }
-
-        promptBuilder.append("KURALLAR:\n");
-        promptBuilder.append("1. Her satır TAM OLARAK şu formatta başlamalıdır: YYYY-MM-DD HH:mm:ss [SEVİYE] paket.adi.SinifAdi - Mesaj\n");
-
-        // ÖRNEK ÇIKTI FORMATI
-        promptBuilder.append("ÖRNEK ÇIKTI FORMATI:\n");
-        promptBuilder.append("2024-03-16 14:30:00 [INFO] com.example.system.Bootstrapper - Sistem başlatılıyor...\n");
-        promptBuilder.append("2024-03-16 14:30:00 [DEBUG] com.example.system.ConfigLoader - Ayarlar belleğe alındı.\n");
-        promptBuilder.append("2024-03-16 14:30:01 [WARN] com.example.db.ConnectionPool - Bağlantı havuzu sınırda, yanıt gecikiyor!\n");
-        promptBuilder.append("2024-03-16 14:30:02 [ERROR] com.example.db.QueryRunner - Veritabanı bağlantısı koptu: SQLException\n");
-
-        // DENGELİ DAĞILIM
-        promptBuilder.append("2. DİKKAT (DENGELİ DAĞILIM): Bu bir log analiz testidir ancak mantıklı olmalıdır. " +
-                "Logların yaklaşık %60'ı sistemin normal çalıştığını gösteren INFO ve DEBUG seviyesinde olmalıdır. " +
-                "Kalan %40'lık kısmı ise senaryoya uygun WARN ve ERROR'lara ayır. " +
-                "Sadece sürekli ERROR fırlatma! Önce INFO/DEBUG ile başla, sonra WARN'lara geç ve en son ERROR ver. " +
-                "ERROR loglarının içinde MUTLAKA 'NullPointerException', 'SQLException', 'TimeoutException' gibi net Java Exception isimleri geçir.\n");
-
-        promptBuilder.append("3. 'paket.adi.SinifAdi' kısmını aynen yazma! Seçilen sisteme uygun GERÇEKÇİ paket ve sınıf isimleri uydur.\n");
-
-        promptBuilder.append("4. Başlangıçta veya sonda HİÇBİR açıklama (İşte loglar vs.) yapma, merhaba deme, markdown (```) KULLANMA. Sadece ham log satırlarını döndür.\n");
-        promptBuilder.append("5. Çok uzun sürse bile işlemi yarıda kesme, istenen satır sayısına ulaşana kadar log üretmeye devam et.\n");
-
-        String aiResponse = aiService.askAi(promptBuilder.toString());
-
-        // KULLANICIYI VE YENİ OTURUMU HAZIRLAMA
-        User currentUser = userRepository.findByUsername(username)
+        User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("Kullanıcı bulunamadı"));
+
+        // 1. KATMAN: MODELİN DNA'SI VE YASAKLAR LİSTESİ (System Prompt)
+        String systemPrompt = "Sen kıdemli bir DevOps ve Sistem Uzmanısın. Görevin, SADECE verilen Sistem Tipi ve Hata Senaryosuna %100 sadık kalarak, yüksek detaylı ve gerçekçi sentetik uygulama logları üretmektir.\n\n" +
+                "KESİN KURALLAR VE YASAKLAR LİSTESİ (BUNLARA UYMAZSAN SİSTEM ÇÖKER):\n" +
+                "1. YASAK_1: İstenen senaryo dışında ASLA farklı bir hata (Exception) tipi üretme! (Örn: HTTP 404 istendiyse NullPointerException, SQLException YAZMA).\n" +
+                "2. YASAK_2: SADECE seçilen Sistem Tipine ait paket (package) ve sınıf isimlerini kullan! Başka sistemlere ait log formatlarını karıştırma.\n" +
+                "3. YASAK_3: Markdown, HTML, kod bloğu (```) veya 'İşte loglar:' gibi hiçbir açıklama metni KULLANMA. Çıktının ilk karakteri ve son karakteri log verisi olmalıdır.\n" +
+                "4. YASAK_4: Logları ASLA birebir kopyala-yapıştır döngüsüne sokma! Her satırda gerçek bir sistemdeki gibi dinamik detaylar (Farklı IP adresleri, farklı Thread ID'ler, farklı SQL sorguları, endpoint'ler veya user-id'ler) uydurarak mesajları ZENGİNLEŞTİR ve ÇEŞİTLENDİR.\n" +
+                "5. Logların %70'i INFO/DEBUG gibi normal akış, %30'u ise TAM OLARAK istenen senaryoyla ilgili WARN/ERROR logları olsun.\n" +
+                "6. Format KESİNLİKLE şu olmalı: YYYY-MM-DD HH:mm:ss.SSS [Thread-Name] [SEVİYE] paket.sinif.Adi - Mesaj";
+
+        // 2. KATMAN: KULLANICI PARAMETRELERİ (User Prompt)
+        String extraDetails = (request.getCustomPrompt() != null && !request.getCustomPrompt().trim().isEmpty())
+                ? request.getCustomPrompt()
+                : "Ekstra detay yok, tamamen ana senaryoya ve kurallara odaklan.";
+
+        String userPrompt = String.format(
+                "SİSTEM TİPİ: %s\n" +
+                        "HATA SENARYOSU: %s\n" +
+                        "ÜRETİLECEK SATIR SAYISI: %d\n" +
+                        "EKSTRA DETAYLAR: %s\n\n" +
+                        "Yukarıdaki parametrelere ve kurallara sıkı sıkıya uyarak sentetik logları üret.",
+                request.getSystemType(),
+                request.getScenario(),
+                request.getMaxLines(),
+                extraDetails
+        );
+
+        // 3. KATMAN: AI'YA YENİ İSTEK AT
+        // AiService.java'da hazırladığın o yeni overloaded metodu (systemPrompt, userPrompt) çağırıyoruz
+        String aiResponse = aiService.askAi(systemPrompt, userPrompt);
+
+        // Gelen yanıtı satırlara böl ve veritabanına kaydet
         String sessionId = UUID.randomUUID().toString();
+        List<LogRecord> logsToSave = new ArrayList<>();
 
-        // GELEN METNİ SATIR SATIR PARSE EDİP VERİTABANINA KAYDETME
         String[] lines = aiResponse.split("\n");
-
         for (String line : lines) {
-            if (line.trim().isEmpty() || line.contains("```")) continue;
+            if (line.trim().isEmpty()) continue;
 
-            // KATI KAPI KONTROLÜ - Satırda tarih deseni yoksa bu bir log değildir, gevezeliktir çöpe at!
-            Matcher dateMatcher = DATE_PATTERN.matcher(line);
-            if (!dateMatcher.find()) {
-                continue;
-            }
-
-            String logLevel = "INFO";
-            if (line.contains("ERROR") || line.contains("[ERROR]")) logLevel = "ERROR";
-            else if (line.contains("WARN") || line.contains("[WARN]")) logLevel = "WARN";
-            else if (line.contains("DEBUG") || line.contains("[DEBUG]")) logLevel = "DEBUG";
-
-            LogRecord record = new LogRecord();
-            record.setLogLevel(logLevel);
-            record.setMessage(line.trim());
-            record.setUser(currentUser);
-            record.setUploadSessionId(sessionId);
-
-            // Tarihi set etme
-            String dateStr = dateMatcher.group(1).replace("T", " ");
-            try {
-                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-                record.setLogTimestamp(LocalDateTime.parse(dateStr, formatter));
-            } catch (DateTimeParseException ignored) {
-                record.setLogTimestamp(LocalDateTime.now());
-            }
-
-            Matcher exMatcher = EXCEPTION_PATTERN.matcher(line);
-            if (exMatcher.find()) {
-                record.setExceptionType(exMatcher.group(1));
-            }
-
-            Matcher classMatcher = CLASS_PATTERN.matcher(line);
-            if (classMatcher.find()) {
-                record.setPackageName(classMatcher.group(1));
-                record.setClassName(classMatcher.group(2));
-            }
-
-            logRecordRepository.save(record);
+            // Artık düz mesaj kaydetmek yok!
+            // LogService içindeki o jilet gibi Regex'lerden (parseLogLine) geçirip öyle veritabanına ekliyoruz.
+            LogRecord log = logService.parseLogLine(line, user, sessionId);
+            logsToSave.add(log);
         }
 
+        logRecordRepository.saveAll(logsToSave);
         return sessionId;
+
     }
 }

@@ -24,8 +24,9 @@ public class LogService {
     private final LogRecordRepository logRecordRepository;
     private final UserRepository userRepository;
 
+    // Milisaniye toleransı eklendi ve regex'ler güçlendirildi
     private static final Pattern EXCEPTION_PATTERN = Pattern.compile("\\b(\\w+(?:Exception|Error))\\b");
-    private static final Pattern DATE_PATTERN = Pattern.compile("(\\d{4}-\\d{2}-\\d{2}[T\\s]\\d{2}:\\d{2}:\\d{2})");
+    private static final Pattern DATE_PATTERN = Pattern.compile("(\\d{4}-\\d{2}-\\d{2}[T\\s]\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?)");
     private static final Pattern CLASS_PATTERN = Pattern.compile("([a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)*)\\.([A-Z][a-zA-Z0-9_]*)");
 
     public LogService(LogRecordRepository logRecordRepository, UserRepository userRepository) {
@@ -38,6 +39,46 @@ public class LogService {
                 .orElseThrow(() -> new RuntimeException("Kullanıcı bulunamadı"));
     }
 
+    // MERKEZİ LOG AYRIŞTIRICI (Hem AI hem de Dosya Yükleme kullanacak)
+    public LogRecord parseLogLine(String line, User currentUser, String sessionId) {
+        String logLevel = "INFO";
+        if (line.contains("[ERROR]") || line.contains(" ERROR ")) logLevel = "ERROR";
+        else if (line.contains("[WARN]") || line.contains(" WARN ")) logLevel = "WARN";
+        else if (line.contains("[DEBUG]") || line.contains(" DEBUG ")) logLevel = "DEBUG";
+
+        LogRecord record = new LogRecord();
+        record.setLogLevel(logLevel);
+        record.setMessage(line.trim());
+        record.setUser(currentUser);
+        record.setUploadSessionId(sessionId);
+        record.setCreatedAt(LocalDateTime.now());
+
+        Matcher exMatcher = EXCEPTION_PATTERN.matcher(line);
+        if (exMatcher.find()) {
+            record.setExceptionType(exMatcher.group(1));
+        }
+
+        Matcher dateMatcher = DATE_PATTERN.matcher(line);
+        if (dateMatcher.find()) {
+            String dateStr = dateMatcher.group(1).replace("T", " ");
+            if (dateStr.contains(".")) { // AI bazen milisaniye üretiyor, parse hatası vermemesi için kesiyoruz
+                dateStr = dateStr.substring(0, dateStr.indexOf("."));
+            }
+            try {
+                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                record.setLogTimestamp(LocalDateTime.parse(dateStr, formatter));
+            } catch (DateTimeParseException ignored) {}
+        }
+
+        Matcher classMatcher = CLASS_PATTERN.matcher(line);
+        if (classMatcher.find()) {
+            record.setPackageName(classMatcher.group(1));
+            record.setClassName(classMatcher.group(2));
+        }
+
+        return record;
+    }
+
     public String processAndSaveLogFile(MultipartFile file, String username) throws Exception {
         User currentUser = getUser(username);
         String sessionId = java.util.UUID.randomUUID().toString();
@@ -48,38 +89,8 @@ public class LogService {
             while ((line = br.readLine()) != null) {
                 if (line.trim().isEmpty()) continue;
 
-                String logLevel = "UNKNOWN";
-                if (line.contains("INFO")) logLevel = "INFO";
-                else if (line.contains("ERROR")) logLevel = "ERROR";
-                else if (line.contains("WARN")) logLevel = "WARN";
-                else if (line.contains("DEBUG")) logLevel = "DEBUG";
-
-                LogRecord record = new LogRecord();
-                record.setLogLevel(logLevel);
-                record.setMessage(line);
-                record.setUser(currentUser);
-                record.setUploadSessionId(sessionId);
-
-                Matcher exMatcher = EXCEPTION_PATTERN.matcher(line);
-                if (exMatcher.find()) {
-                    record.setExceptionType(exMatcher.group(1));
-                }
-
-                Matcher dateMatcher = DATE_PATTERN.matcher(line);
-                if (dateMatcher.find()) {
-                    String dateStr = dateMatcher.group(1).replace("T", " ");
-                    try {
-                        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-                        record.setLogTimestamp(LocalDateTime.parse(dateStr, formatter));
-                    } catch (DateTimeParseException ignored) {}
-                }
-
-                Matcher classMatcher = CLASS_PATTERN.matcher(line);
-                if (classMatcher.find()) {
-                    record.setPackageName(classMatcher.group(1));
-                    record.setClassName(classMatcher.group(2));
-                }
-
+                // Gelişmiş ayrıştırıcıyı çağırıyoruz
+                LogRecord record = parseLogLine(line, currentUser, sessionId);
                 logRecordRepository.save(record);
                 savedCount++;
             }
@@ -133,8 +144,6 @@ public class LogService {
         return logRecordRepository.findByUserAndUploadSessionId(getUser(username), sessionId);
     }
 
-
-
     public LogStatsResponse getStatsForSessions(String username, List<String> sessionIds) {
         if (sessionIds == null || sessionIds.isEmpty()) {
             return new LogStatsResponse(0L, 0L, 0L, 0L, 0L, null, null, null, null);
@@ -172,5 +181,4 @@ public class LogService {
     public void deleteSession(String username, String sessionId) {
         logRecordRepository.deleteByUploadSessionIdAndUser(sessionId, getUser(username));
     }
-
 }

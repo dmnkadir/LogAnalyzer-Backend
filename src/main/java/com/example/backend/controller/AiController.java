@@ -3,12 +3,14 @@ package com.example.backend.controller;
 import com.example.backend.dto.ApiResponse;
 import com.example.backend.dto.DummyLogRequest;
 import com.example.backend.dto.ExceptionExplainRequest;
+import com.example.backend.entity.IncidentReport;
 import com.example.backend.entity.LogRecord;
 import com.example.backend.entity.User;
 import com.example.backend.repository.LogRecordRepository;
 import com.example.backend.repository.UserRepository;
 import com.example.backend.service.AiService;
 import com.example.backend.service.DummyLogGeneratorService;
+import com.example.backend.service.IncidentReportService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -25,12 +27,14 @@ public class AiController {
     private final LogRecordRepository logRecordRepository;
     private final UserRepository userRepository;
     private final DummyLogGeneratorService dummyService;
+    private final IncidentReportService incidentReportService; // YENİ EKLENDİ
 
-    public AiController(AiService aiService, LogRecordRepository logRecordRepository, UserRepository userRepository, DummyLogGeneratorService dummyService) {
+    public AiController(AiService aiService, LogRecordRepository logRecordRepository, UserRepository userRepository, DummyLogGeneratorService dummyService, IncidentReportService incidentReportService) {
         this.aiService = aiService;
         this.logRecordRepository = logRecordRepository;
         this.userRepository = userRepository;
         this.dummyService = dummyService;
+        this.incidentReportService = incidentReportService; // YENİ EKLENDİ
     }
 
     @GetMapping("/test")
@@ -75,11 +79,23 @@ public class AiController {
                     "İşte analiz edilecek kritik loglar:\n" + logTexts;
 
             String aiResponse = aiService.askAi(prompt);
-            return ResponseEntity.ok(ApiResponse.success(aiResponse, "Analiz Tamamlandı"));
+
+            // YENİ: Yapay zekadan dönen yanıtı veritabanına kaydediyoruz
+            String combinedSessionIds = String.join(",", sessionIds);
+            incidentReportService.saveReport(principal.getName(), combinedSessionIds, aiResponse);
+
+            return ResponseEntity.ok(ApiResponse.success(aiResponse, "Analiz Tamamlandı ve Kaydedildi"));
 
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(ApiResponse.error("Analiz sırasında bir hata oluştu: " + e.getMessage()));
         }
+    }
+
+    // YENİ: Geçmiş Raporları Listeleme Servisi
+    @GetMapping("/reports")
+    public ResponseEntity<ApiResponse<List<IncidentReport>>> getUserReports(Principal principal) {
+        List<IncidentReport> reports = incidentReportService.getUserReports(principal.getName());
+        return ResponseEntity.ok(ApiResponse.success(reports, "Geçmiş raporlar başarıyla getirildi"));
     }
 
     @PostMapping("/generate-dummy")
@@ -93,7 +109,7 @@ public class AiController {
         }
     }
 
-    // Tekli Exception Açıklama Servisi
+    // ESKİ KOD KORUNDU: Tekli Exception Açıklama Servisi
     @PostMapping("/explain-exception")
     public ResponseEntity<ApiResponse<String>> explainException(@RequestBody ExceptionExplainRequest request, Principal principal) {
         try {
@@ -125,4 +141,65 @@ public class AiController {
                     .body(ApiResponse.error("Exception açıklanırken bir hata oluştu: " + e.getMessage()));
         }
     }
+    @DeleteMapping("/reports/{id}")
+    public ResponseEntity<ApiResponse<String>> deleteReport(@PathVariable Long id, Principal principal) {
+        try {
+            incidentReportService.deleteReport(id, principal.getName());
+            return ResponseEntity.ok(ApiResponse.success(null, "Rapor başarıyla silindi"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Rapor silinirken hata oluştu: " + e.getMessage()));
+        }
+    }
+
+    @PutMapping("/reports/{id}/name")
+    public ResponseEntity<ApiResponse<String>> updateReportName(@PathVariable Long id, @RequestParam String newName, Principal principal) {
+        try {
+            incidentReportService.updateReportName(id, principal.getName(), newName);
+            return ResponseEntity.ok(ApiResponse.success(null, "Rapor ismi başarıyla güncellendi"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Hata: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/suggest-name/session/{sessionId}")
+    public ResponseEntity<ApiResponse<String>> suggestSessionName(@PathVariable String sessionId, Principal principal) {
+        try {
+            User currentUser = userRepository.findByUsername(principal.getName()).orElseThrow();
+            // Bu oturuma ait logları çekiyoruz
+            List<LogRecord> logs = logRecordRepository.findByUserAndUploadSessionId(currentUser, sessionId);
+
+            if (logs.isEmpty()) {
+                return ResponseEntity.ok(ApiResponse.success("Bilinmeyen Oturum", "Kayıt yok"));
+            }
+
+            // Limit kaldırıldı. Hata ve Uyarıların tümünü çekiyoruz!
+            String logSnippet = logs.stream()
+                    .filter(log -> "ERROR".equals(log.getLogLevel()) || "WARN".equals(log.getLogLevel()))
+                    .map(LogRecord::getMessage)
+                    .collect(Collectors.joining("\n"));
+
+            if (logSnippet.isEmpty()) {
+                logSnippet = logs.stream().map(LogRecord::getMessage).collect(Collectors.joining("\n"));
+            }
+
+            // LLM token limitini korumak için devasa log dosyalarında karakter kısıtlaması (10.000 Karakter)
+            if (logSnippet.length() > 10000) {
+                logSnippet = logSnippet.substring(0, 10000);
+            }
+
+            // Sertleştirilmiş ve teknik odaklı Prompt
+            String prompt = "Sen uzman bir sistem mimarısın. Aşağıdaki log kayıtlarını incele. " +
+                    "Bana bu loglardaki EN KÖK HATAYI (Örn: NullPointerException, Connection Timeout, Disk Full) belirten en fazla 3-4 kelimelik spesifik bir teknik başlık öner. " +
+                    "KESİNLİKLE 'Sistem Hata Raporu', 'Log Analizi', 'Beklenmedik Hata' gibi yuvarlak ve jenerik kelimeler KULLANMA. Doğrudan hatanın veya sınıfın adını söyle. " +
+                    "SADECE BAŞLIĞI YAZ, tırnak işareti, nokta veya açıklama KULLANMA.\n\nLoglar:\n" + logSnippet;
+
+            String aiName = aiService.askAi(prompt).replace("\"", "").trim();
+
+            return ResponseEntity.ok(ApiResponse.success(aiName, "İsim önerisi başarılı"));
+        } catch (Exception e) {
+            return ResponseEntity.ok(ApiResponse.success("Genel Analiz Oturumu", "Hata oluştu"));
+        }
+    }
+
+
 }
