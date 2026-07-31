@@ -10,15 +10,19 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
+
+
 @Service
 public class IncidentReportService {
 
     private final IncidentReportRepository incidentReportRepository;
     private final UserRepository userRepository;
+    private final com.example.backend.repository.LogRecordRepository logRecordRepository;
 
-    public IncidentReportService(IncidentReportRepository incidentReportRepository, UserRepository userRepository) {
+    public IncidentReportService(IncidentReportRepository incidentReportRepository, UserRepository userRepository, com.example.backend.repository.LogRecordRepository logRecordRepository) {
         this.incidentReportRepository = incidentReportRepository;
         this.userRepository = userRepository;
+        this.logRecordRepository = logRecordRepository;
     }
 
     // AI'dan gelen raporu veritabanına kaydeder
@@ -62,7 +66,14 @@ public class IncidentReportService {
     @org.springframework.transaction.annotation.Transactional
     public void updateReportName(Long id, String username, String newName) {
         User user = userRepository.findByUsername(username).orElseThrow();
+        IncidentReport report = incidentReportRepository.findById(id).orElseThrow();
+
         incidentReportRepository.updateReportName(id, user, newName);
+
+        // Eğer bu rapor tek bir oturuma aitse (içinde virgül yoksa), oturumun ismini de güncelle
+        if (!report.getSessionId().contains(",")) {
+            logRecordRepository.updateSessionName(user, report.getSessionId(), newName);
+        }
     }
 
 }

@@ -3,6 +3,7 @@ package com.example.backend.service;
 import com.example.backend.dto.LogStatsResponse;
 import com.example.backend.entity.LogRecord;
 import com.example.backend.entity.User;
+import com.example.backend.repository.IncidentReportRepository;
 import com.example.backend.repository.LogRecordRepository;
 import com.example.backend.repository.UserRepository;
 import org.springframework.stereotype.Service;
@@ -23,15 +24,17 @@ public class LogService {
 
     private final LogRecordRepository logRecordRepository;
     private final UserRepository userRepository;
+    private final IncidentReportRepository incidentReportRepository;
 
     // Milisaniye toleransı eklendi ve regex'ler güçlendirildi
     private static final Pattern EXCEPTION_PATTERN = Pattern.compile("\\b(\\w+(?:Exception|Error))\\b");
     private static final Pattern DATE_PATTERN = Pattern.compile("(\\d{4}-\\d{2}-\\d{2}[T\\s]\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?)");
     private static final Pattern CLASS_PATTERN = Pattern.compile("([a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)*)\\.([A-Z][a-zA-Z0-9_]*)");
 
-    public LogService(LogRecordRepository logRecordRepository, UserRepository userRepository) {
+    public LogService(LogRecordRepository logRecordRepository, UserRepository userRepository, IncidentReportRepository incidentReportRepository) {
         this.logRecordRepository = logRecordRepository;
         this.userRepository = userRepository;
+        this.incidentReportRepository = incidentReportRepository;
     }
 
     private User getUser(String username) {
@@ -174,7 +177,12 @@ public class LogService {
 
     @org.springframework.transaction.annotation.Transactional
     public void updateSessionName(String username, String sessionId, String newName) {
-        logRecordRepository.updateSessionName(getUser(username), sessionId, newName);
+        User user = getUser(username);
+        logRecordRepository.updateSessionName(user, sessionId, newName);
+
+        // Oturumun ismi değiştiyse, ona ait bir Olay Raporu varsa onun da ismini güncelle
+        incidentReportRepository.findBySessionIdAndUser(sessionId, user)
+                .ifPresent(report -> incidentReportRepository.updateReportName(report.getId(), user, newName));
     }
 
     @org.springframework.transaction.annotation.Transactional
