@@ -7,6 +7,7 @@ import com.example.backend.repository.IncidentReportRepository;
 import com.example.backend.repository.LogRecordRepository;
 import com.example.backend.repository.UserRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedReader;
@@ -18,6 +19,9 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 @Service
 public class LogService {
@@ -26,7 +30,6 @@ public class LogService {
     private final UserRepository userRepository;
     private final IncidentReportRepository incidentReportRepository;
 
-    // Milisaniye toleransı eklendi ve regex'ler güçlendirildi
     private static final Pattern EXCEPTION_PATTERN = Pattern.compile("\\b(\\w+(?:Exception|Error))\\b");
     private static final Pattern DATE_PATTERN = Pattern.compile("(\\d{4}-\\d{2}-\\d{2}[T\\s]\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?)");
     private static final Pattern CLASS_PATTERN = Pattern.compile("([a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)*)\\.([A-Z][a-zA-Z0-9_]*)");
@@ -42,12 +45,21 @@ public class LogService {
                 .orElseThrow(() -> new RuntimeException("Kullanıcı bulunamadı"));
     }
 
-    // MERKEZİ LOG AYRIŞTIRICI (Hem AI hem de Dosya Yükleme kullanacak)
     public LogRecord parseLogLine(String line, User currentUser, String sessionId) {
-        String logLevel = "INFO";
-        if (line.contains("[ERROR]") || line.contains(" ERROR ")) logLevel = "ERROR";
-        else if (line.contains("[WARN]") || line.contains(" WARN ")) logLevel = "WARN";
-        else if (line.contains("[DEBUG]") || line.contains(" DEBUG ")) logLevel = "DEBUG";
+        String logLevel = "INFO"; // Varsayılan
+
+        String upperLine = line.toUpperCase();
+
+        if (upperLine.contains("[ERROR]") || upperLine.contains(" ERROR ") || upperLine.startsWith("ERROR") ||
+                upperLine.contains("FAILURE") || upperLine.contains("FAILED") || upperLine.contains("ABNORMALLY") || upperLine.contains("FATAL")) {
+            logLevel = "ERROR";
+        }
+        else if (upperLine.contains("[WARN]") || upperLine.contains(" WARN ") || upperLine.startsWith("WARN")) {
+            logLevel = "WARN";
+        }
+        else if (upperLine.contains("[DEBUG]") || upperLine.contains(" DEBUG ") || upperLine.startsWith("DEBUG")) {
+            logLevel = "DEBUG";
+        }
 
         LogRecord record = new LogRecord();
         record.setLogLevel(logLevel);
@@ -64,7 +76,7 @@ public class LogService {
         Matcher dateMatcher = DATE_PATTERN.matcher(line);
         if (dateMatcher.find()) {
             String dateStr = dateMatcher.group(1).replace("T", " ");
-            if (dateStr.contains(".")) { // AI bazen milisaniye üretiyor, parse hatası vermemesi için kesiyoruz
+            if (dateStr.contains(".")) {
                 dateStr = dateStr.substring(0, dateStr.indexOf("."));
             }
             try {
@@ -82,23 +94,70 @@ public class LogService {
         return record;
     }
 
-    public String processAndSaveLogFile(MultipartFile file, String username) throws Exception {
-        User currentUser = getUser(username);
-        String sessionId = java.util.UUID.randomUUID().toString();
-        int savedCount = 0;
-
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                if (line.trim().isEmpty()) continue;
-
-                // Gelişmiş ayrıştırıcıyı çağırıyoruz
-                LogRecord record = parseLogLine(line, currentUser, sessionId);
-                logRecordRepository.save(record);
-                savedCount++;
-            }
+    private int processBufferedReader(BufferedReader br, User currentUser, String sessionId) throws Exception {
+        int count = 0;
+        String line;
+        while ((line = br.readLine()) != null) {
+            if (line.trim().isEmpty()) continue;
+            LogRecord record = parseLogLine(line, currentUser, sessionId);
+            logRecordRepository.save(record);
+            count++;
         }
-        return "Başarılı " + savedCount + " adet log yüklendi. Oturum ID: " + sessionId;
+        return count;
+    }
+
+    // Tekli değil, ÇOKLU dosya alıyor ve TRANSACTIONAL çalışıyor
+    @Transactional(rollbackFor = Exception.class)
+    public String processAndSaveLogFiles(List<MultipartFile> files, String username) throws Exception {
+        User currentUser = getUser(username);
+        // Tüm dosyalar aynı oturuma kaydedilecek
+        String sessionId = java.util.UUID.randomUUID().toString();
+        int totalSavedCount = 0;
+
+        for (MultipartFile file : files) {
+            String originalFilename = file.getOriginalFilename();
+            if (originalFilename == null) {
+                throw new RuntimeException("Geçersiz dosya adı tespit edildi.");
+            }
+
+            String lowerName = originalFilename.toLowerCase();
+            int savedCount = 0;
+
+            if (lowerName.endsWith(".zip")) {
+                try (ZipInputStream zis = new ZipInputStream(file.getInputStream())) {
+                    ZipEntry entry;
+                    boolean foundValidEntry = false;
+                    while ((entry = zis.getNextEntry()) != null) {
+                        if (!entry.isDirectory() && (entry.getName().toLowerCase().endsWith(".log") || entry.getName().toLowerCase().endsWith(".txt"))) {
+                            BufferedReader br = new BufferedReader(new InputStreamReader(zis, StandardCharsets.UTF_8));
+                            savedCount += processBufferedReader(br, currentUser, sessionId);
+                            foundValidEntry = true;
+                        }
+                        zis.closeEntry();
+                    }
+                    if (!foundValidEntry) throw new RuntimeException("'" + originalFilename + "' zip arşivi okunabilir bir log dosyası içermiyor!");
+                }
+            } else if (lowerName.endsWith(".gz")) {
+                try (GZIPInputStream gis = new GZIPInputStream(file.getInputStream());
+                     BufferedReader br = new BufferedReader(new InputStreamReader(gis, StandardCharsets.UTF_8))) {
+                    savedCount += processBufferedReader(br, currentUser, sessionId);
+                }
+            } else if (lowerName.endsWith(".log") || lowerName.endsWith(".txt")) {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+                    savedCount += processBufferedReader(br, currentUser, sessionId);
+                }
+            } else {
+                throw new RuntimeException("'" + originalFilename + "' desteklenmeyen bir formattır. İşlem iptal edildi.");
+            }
+
+            if (savedCount == 0) {
+                throw new RuntimeException("'" + originalFilename + "' dosyası içinde geçerli log satırı bulunamadı. İşlem iptal edildi.");
+            }
+
+            totalSavedCount += savedCount;
+        }
+
+        return "Başarılı! Toplam " + totalSavedCount + " adet log yüklendi. Oturum ID: " + sessionId;
     }
 
     public List<LogRecord> getAllLogs(String username) {
@@ -175,17 +234,16 @@ public class LogService {
         return logRecordRepository.findFilteredLogs(getUser(username), sessionIds, keyword, level);
     }
 
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public void updateSessionName(String username, String sessionId, String newName) {
         User user = getUser(username);
         logRecordRepository.updateSessionName(user, sessionId, newName);
 
-        // Oturumun ismi değiştiyse, ona ait bir Olay Raporu varsa onun da ismini güncelle
         incidentReportRepository.findBySessionIdAndUser(sessionId, user)
                 .ifPresent(report -> incidentReportRepository.updateReportName(report.getId(), user, newName));
     }
 
-    @org.springframework.transaction.annotation.Transactional
+    @Transactional
     public void deleteSession(String username, String sessionId) {
         logRecordRepository.deleteByUploadSessionIdAndUser(sessionId, getUser(username));
     }

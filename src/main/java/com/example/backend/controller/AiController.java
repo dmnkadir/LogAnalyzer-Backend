@@ -27,24 +27,31 @@ public class AiController {
     private final LogRecordRepository logRecordRepository;
     private final UserRepository userRepository;
     private final DummyLogGeneratorService dummyService;
-    private final IncidentReportService incidentReportService; // YENİ EKLENDİ
+    private final IncidentReportService incidentReportService;
 
     public AiController(AiService aiService, LogRecordRepository logRecordRepository, UserRepository userRepository, DummyLogGeneratorService dummyService, IncidentReportService incidentReportService) {
         this.aiService = aiService;
         this.logRecordRepository = logRecordRepository;
         this.userRepository = userRepository;
         this.dummyService = dummyService;
-        this.incidentReportService = incidentReportService; // YENİ EKLENDİ
+        this.incidentReportService = incidentReportService;
     }
 
+    // Parametre eklendi: provider
     @GetMapping("/test")
-    public ResponseEntity<ApiResponse<String>> testGemini(@RequestParam("soru") String soru) {
-        String cevap = aiService.askAi(soru);
+    public ResponseEntity<ApiResponse<String>> testGemini(
+            @RequestParam("soru") String soru,
+            @RequestParam(required = false, defaultValue = "gemini-auto") String provider) {
+        String cevap = aiService.askAi(soru, provider);
         return ResponseEntity.ok(ApiResponse.success(cevap, "AI Yanıtı başarılı"));
     }
 
+    // Parametre eklendi: provider
     @GetMapping("/analyze-session/{sessionIds}")
-    public ResponseEntity<ApiResponse<String>> analyzeSession(@PathVariable List<String> sessionIds, Principal principal) {
+    public ResponseEntity<ApiResponse<String>> analyzeSession(
+            @PathVariable List<String> sessionIds,
+            @RequestParam(required = false, defaultValue = "gemini-auto") String provider,
+            Principal principal) {
         try {
             User currentUser = userRepository.findByUsername(principal.getName()).orElseThrow();
 
@@ -54,44 +61,29 @@ public class AiController {
                     .collect(Collectors.toList());
 
             if (criticalLogs.isEmpty()) {
-                return ResponseEntity.ok(ApiResponse.success("Seçilen oturumlarda kritik bir hata (ERROR/WARN) bulunamadı. Sistem sağlıklı görünüyor.", "Durum İyi"));
+                return ResponseEntity.ok(ApiResponse.success("Seçilen oturumlarda kritik bir hata bulunamadı.", "Durum İyi"));
             }
 
-            String logTexts = criticalLogs.stream()
-                    .map(LogRecord::getMessage)
-                    .collect(Collectors.joining("\n"));
+            String logTexts = criticalLogs.stream().map(LogRecord::getMessage).collect(Collectors.joining("\n"));
 
             String prompt = "Sen uzman bir DevOps ve Sistem Yöneticisisin. Aşağıdaki logları analiz et ve bana profesyonel bir olay raporu (Incident Report) hazırla. " +
                     "Tüm rapor SADECE TÜRKÇE olmalıdır.\n\n" +
                     "Lütfen raporu AŞAĞIDAKİ MARKDOWN FORMATINA BİREBİR UYARAK ver:\n\n" +
-                    "### 1. Genel Özet\n" +
-                    "[Sistemde tam olarak ne yaşandığına dair 2-3 cümlelik net bir özet]\n\n" +
-                    "### 2. Risk Seviyesi\n" +
-                    "**[Sadece şu kelimelerden BİRİNİ yaz: KRİTİK, YÜKSEK, ORTA, DÜŞÜK]**\n\n" +
-                    "### 3. Olası Kök Neden (Root Cause)\n" +
-                    "[Hatanın teknik ve temel sebebi]\n\n" +
-                    "### 4. Kritik Hatalar ve Etkilenen Servisler\n" +
-                    "- **[Hata Adı/Exception]**: [Hatanın açıklaması] *(Etkilenen Sınıf: [Sınıf/Paket adı])*\n" +
-                    "- ...\n\n" +
-                    "### 5. Çözüm Adımları\n" +
-                    "1. [İlk adım]\n" +
-                    "2. [İkinci adım]\n\n" +
-                    "İşte analiz edilecek kritik loglar:\n" + logTexts;
+                    "### 1. Genel Özet\n[Özet]\n\n### 2. Risk Seviyesi\n**[KRİTİK, YÜKSEK, ORTA, DÜŞÜK]**\n\n" +
+                    "### 3. Olası Kök Neden (Root Cause)\n[Sebep]\n\n### 4. Kritik Hatalar ve Etkilenen Servisler\n" +
+                    "- **[Hata Adı]**: [Açıklama]\n\n### 5. Çözüm Adımları\n1. [Adım]\n\nLoglar:\n" + logTexts;
 
-            String aiResponse = aiService.askAi(prompt);
+            String aiResponse = aiService.askAi(prompt, provider);
 
-            // YENİ: Yapay zekadan dönen yanıtı veritabanına kaydediyoruz
             String combinedSessionIds = String.join(",", sessionIds);
             incidentReportService.saveReport(principal.getName(), combinedSessionIds, aiResponse);
 
             return ResponseEntity.ok(ApiResponse.success(aiResponse, "Analiz Tamamlandı ve Kaydedildi"));
-
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body(ApiResponse.error("Analiz sırasında bir hata oluştu: " + e.getMessage()));
+            return ResponseEntity.internalServerError().body(ApiResponse.error("Analiz hatası: " + e.getMessage()));
         }
     }
 
-    // YENİ: Geçmiş Raporları Listeleme Servisi
     @GetMapping("/reports")
     public ResponseEntity<ApiResponse<List<IncidentReport>>> getUserReports(Principal principal) {
         List<IncidentReport> reports = incidentReportService.getUserReports(principal.getName());
@@ -102,14 +94,13 @@ public class AiController {
     public ResponseEntity<ApiResponse<String>> generateDummyLog(@RequestBody DummyLogRequest request, Principal principal) {
         try {
             String newSessionId = dummyService.generateAndSaveDummyLogs(request, principal.getName());
-            return ResponseEntity.ok(ApiResponse.success(newSessionId, "Sahte loglar başarıyla üretildi ve kaydedildi"));
+            return ResponseEntity.ok(ApiResponse.success(newSessionId, "Sahte loglar başarıyla üretildi"));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.error("Log üretilirken bir hata oluştu: " + e.getMessage()));
+                    .body(ApiResponse.error("Log üretilirken hata: " + e.getMessage()));
         }
     }
 
-    // ESKİ KOD KORUNDU: Tekli Exception Açıklama Servisi
     @PostMapping("/explain-exception")
     public ResponseEntity<ApiResponse<String>> explainException(@RequestBody ExceptionExplainRequest request, Principal principal) {
         try {
@@ -117,37 +108,27 @@ public class AiController {
                 return ResponseEntity.badRequest().body(ApiResponse.error("Exception adı boş olamaz."));
             }
 
-            // AI için özel, süslü bir Markdown şablonu hazırlıyoruz
-            String prompt = "Sen kıdemli bir Yazılım Mimarı ve Sistem Uzmanısın. " +
-                    "Sistem loglarında sıkça karşılaştığımız '" + request.getExceptionName() + "' hatasını yazılım ekibine açıklaman gerekiyor. " +
-                    "Tüm yanıtın SADECE TÜRKÇE olmalıdır. Teknik terimleri (örn: Database, Memory) İngilizce bırakabilirsin.\n\n" +
-                    "Lütfen cevabını SADECE aşağıdaki MARKDOWN formatına BİREBİR uyarak ver (Başka hiçbir giriş cümlesi kurma):\n\n" +
-                    "### Hata Nedir?\n" +
-                    "[Hatanın ne anlama geldiğine dair kısa ve net bir açıklama]\n\n" +
-                    "### Ne Zaman / Neden Oluşur?\n" +
-                    "- [En yaygın 1. sebep]\n" +
-                    "- [En yaygın 2. sebep]\n" +
-                    "- [Varsa 3. sebep]\n\n" +
-                    "### Nasıl Çözülür?\n" +
-                    "1. [İlk ve en etkili çözüm adımı]\n" +
-                    "2. [Alternatif veya ikinci kontrol adımı]\n\n" +
-                    "ÖNEMLİ: Hata isimlerini ve teknik terimleri mutlaka **kalın** (bold) yaz.";
+            String prompt = "Sen kıdemli bir Yazılım Mimarı ve Sistem Uzmanısın. Sıkça karşılaştığımız '" + request.getExceptionName() + "' hatasını açıkla. " +
+                    "Yanıt SADECE TÜRKÇE olmalıdır.\n\nMARKDOWN FORMATI:\n### Hata Nedir?\n[Açıklama]\n\n### Ne Zaman / Neden Oluşur?\n- [Sebep 1]\n\n### Nasıl Çözülür?\n1. [Çözüm 1]";
 
-            String aiResponse = aiService.askAi(prompt);
-            return ResponseEntity.ok(ApiResponse.success(aiResponse, "Exception analizi başarıyla tamamlandı."));
+            // DTO içinden provider bilgisini alıyoruz
+            String provider = (request.getProvider() != null) ? request.getProvider() : "gemini";
+            String aiResponse = aiService.askAi(prompt, provider);
 
+            return ResponseEntity.ok(ApiResponse.success(aiResponse, "Exception analizi tamamlandı."));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.error("Exception açıklanırken bir hata oluştu: " + e.getMessage()));
+                    .body(ApiResponse.error("Exception açıklanırken hata: " + e.getMessage()));
         }
     }
+
     @DeleteMapping("/reports/{id}")
     public ResponseEntity<ApiResponse<String>> deleteReport(@PathVariable Long id, Principal principal) {
         try {
             incidentReportService.deleteReport(id, principal.getName());
-            return ResponseEntity.ok(ApiResponse.success(null, "Rapor başarıyla silindi"));
+            return ResponseEntity.ok(ApiResponse.success(null, "Rapor silindi"));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error("Rapor silinirken hata oluştu: " + e.getMessage()));
+            return ResponseEntity.badRequest().body(ApiResponse.error("Silme hatası: " + e.getMessage()));
         }
     }
 
@@ -155,51 +136,36 @@ public class AiController {
     public ResponseEntity<ApiResponse<String>> updateReportName(@PathVariable Long id, @RequestParam String newName, Principal principal) {
         try {
             incidentReportService.updateReportName(id, principal.getName(), newName);
-            return ResponseEntity.ok(ApiResponse.success(null, "Rapor ismi başarıyla güncellendi"));
+            return ResponseEntity.ok(ApiResponse.success(null, "Rapor ismi güncellendi"));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(ApiResponse.error("Hata: " + e.getMessage()));
         }
     }
 
+    // Parametre eklendi: provider
     @GetMapping("/suggest-name/session/{sessionId}")
-    public ResponseEntity<ApiResponse<String>> suggestSessionName(@PathVariable String sessionId, Principal principal) {
+    public ResponseEntity<ApiResponse<String>> suggestSessionName(
+            @PathVariable String sessionId,
+            @RequestParam(required = false, defaultValue = "gemini-auto") String provider,
+            Principal principal) {
         try {
             User currentUser = userRepository.findByUsername(principal.getName()).orElseThrow();
-            // Bu oturuma ait logları çekiyoruz
             List<LogRecord> logs = logRecordRepository.findByUserAndUploadSessionId(currentUser, sessionId);
 
-            if (logs.isEmpty()) {
-                return ResponseEntity.ok(ApiResponse.success("Bilinmeyen Oturum", "Kayıt yok"));
-            }
+            if (logs.isEmpty()) return ResponseEntity.ok(ApiResponse.success("Bilinmeyen Oturum", "Kayıt yok"));
 
-            // Limit kaldırıldı. Hata ve Uyarıların tümünü çekiyoruz!
-            String logSnippet = logs.stream()
-                    .filter(log -> "ERROR".equals(log.getLogLevel()) || "WARN".equals(log.getLogLevel()))
-                    .map(LogRecord::getMessage)
-                    .collect(Collectors.joining("\n"));
+            String logSnippet = logs.stream().filter(log -> "ERROR".equals(log.getLogLevel()) || "WARN".equals(log.getLogLevel()))
+                    .map(LogRecord::getMessage).collect(Collectors.joining("\n"));
+            if (logSnippet.isEmpty()) logSnippet = logs.stream().map(LogRecord::getMessage).collect(Collectors.joining("\n"));
+            if (logSnippet.length() > 10000) logSnippet = logSnippet.substring(0, 10000);
 
-            if (logSnippet.isEmpty()) {
-                logSnippet = logs.stream().map(LogRecord::getMessage).collect(Collectors.joining("\n"));
-            }
+            String prompt = "Aşağıdaki log kayıtlarını incele. EN KÖK HATAYI belirten en fazla 3-4 kelimelik spesifik bir teknik başlık öner. " +
+                    "SADECE BAŞLIĞI YAZ.\n\nLoglar:\n" + logSnippet;
 
-            // LLM token limitini korumak için devasa log dosyalarında karakter kısıtlaması (10.000 Karakter)
-            if (logSnippet.length() > 10000) {
-                logSnippet = logSnippet.substring(0, 10000);
-            }
-
-            // Sertleştirilmiş ve teknik odaklı Prompt
-            String prompt = "Sen uzman bir sistem mimarısın. Aşağıdaki log kayıtlarını incele. " +
-                    "Bana bu loglardaki EN KÖK HATAYI (Örn: NullPointerException, Connection Timeout, Disk Full) belirten en fazla 3-4 kelimelik spesifik bir teknik başlık öner. " +
-                    "KESİNLİKLE 'Sistem Hata Raporu', 'Log Analizi', 'Beklenmedik Hata' gibi yuvarlak ve jenerik kelimeler KULLANMA. Doğrudan hatanın veya sınıfın adını söyle. " +
-                    "SADECE BAŞLIĞI YAZ, tırnak işareti, nokta veya açıklama KULLANMA.\n\nLoglar:\n" + logSnippet;
-
-            String aiName = aiService.askAi(prompt).replace("\"", "").trim();
-
+            String aiName = aiService.askAi(prompt, provider).replace("\"", "").trim();
             return ResponseEntity.ok(ApiResponse.success(aiName, "İsim önerisi başarılı"));
         } catch (Exception e) {
             return ResponseEntity.ok(ApiResponse.success("Genel Analiz Oturumu", "Hata oluştu"));
         }
     }
-
-
 }

@@ -9,4 +9,5 @@ public class DummyLogRequest {
     private int minLines;         // Minimum satır sayısı
     private int maxLines;         // Maksimum satır sayısı
     private String customPrompt;  // Kullanıcının eklemek istediği serbest metin
+    private String provider; // "gemini" veya "groq"
 }

@@ -22,16 +22,17 @@ public class LogController {
         this.logService = logService;
     }
 
+    // Artık çoklu dosya (List<MultipartFile> files) kabul ediyor
     @PostMapping("/upload")
-    public ResponseEntity<ApiResponse<String>> uploadLogFile(@RequestParam("file") MultipartFile file, Principal principal) {
-        if (file.isEmpty()) {
-            return ResponseEntity.badRequest().body(ApiResponse.error("Lütfen bir dosya seçin!"));
+    public ResponseEntity<ApiResponse<String>> uploadLogFiles(@RequestParam("files") List<MultipartFile> files, Principal principal) {
+        if (files == null || files.isEmpty()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("Lütfen en az bir dosya seçin!"));
         }
         try {
-            String message = logService.processAndSaveLogFile(file, principal.getName());
-            return ResponseEntity.ok(ApiResponse.success(message, "Dosya başarıyla işlendi"));
+            String message = logService.processAndSaveLogFiles(files, principal.getName());
+            return ResponseEntity.ok(ApiResponse.success(message, "Dosyalar başarıyla işlendi"));
         } catch (Exception e) {
-            throw new RuntimeException("Dosya işlenirken hata oluştu: " + e.getMessage());
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }
     }
 
@@ -40,7 +41,6 @@ public class LogController {
         return ResponseEntity.ok(ApiResponse.success(logService.getAllLogs(principal.getName()), "Loglar getirildi"));
     }
 
-    // Eğer sessionIds gelirse o oturumların, gelmezse tüm oturumların istatistiklerini getir
     @GetMapping("/stats")
     public ResponseEntity<ApiResponse<LogStatsResponse>> getLogStats(@RequestParam(required = false) List<String> sessionIds, Principal principal) {
         if (sessionIds != null && !sessionIds.isEmpty()) {
@@ -49,7 +49,6 @@ public class LogController {
         return ResponseEntity.ok(ApiResponse.success(logService.getLogStats(principal.getName()), "Genel istatistikler getirildi"));
     }
 
-    // Frontend'deki tablonun çoklu oturum filtrelemesi için
     @GetMapping("/filter")
     public ResponseEntity<ApiResponse<List<LogRecord>>> getFilteredLogs(
             @RequestParam(required = false) List<String> sessionIds,
@@ -66,7 +65,6 @@ public class LogController {
         return ResponseEntity.ok(ApiResponse.success(logService.getUserSessions(principal.getName()), "Oturumlar getirildi"));
     }
 
-    // Eski tekli oturum çağırma metodu
     @GetMapping("/session/{sessionId}")
     public ResponseEntity<ApiResponse<List<LogRecord>>> getLogsBySession(
             @PathVariable String sessionId,
@@ -97,5 +95,4 @@ public class LogController {
         logService.deleteSession(principal.getName(), sessionId);
         return ResponseEntity.ok(ApiResponse.success(null, "Oturum ve ait olduğu tüm loglar başarıyla silindi"));
     }
-
 }

@@ -1,75 +1,72 @@
 package com.example.backend.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 @Service
 public class AiService {
 
-    @Value("${groq.api.key}")
-    private String apiKey;
+    private final Map<String, AiProvider> providerMap = new HashMap<>();
 
-    // Groq'un API adresini kullanıyoruz
-    private final String API_URL = "https://api.groq.com/openai/v1/chat/completions";
-    private final RestTemplate restTemplate = new RestTemplate();
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
-    /**
-     * Varsayılan system prompt ile AI'ya soru gönderir.
-     * Mevcut analyze-session, explain-exception gibi servisler bu metodu kullanmaya devam eder.
-     */
-    public String askAi(String prompt) {
-        String defaultSystemPrompt = "Sen uzman bir yazılım mühendisisin. Tüm yanıtlarını TÜRKÇE olarak vermelisin. " +
-                "'Initialize', 'Reference', 'Null' gibi teknik terimleri doğrudan İngilizce olarak bırakabilirsin. " +
-                "KESİNLİKLE sadece Latin alfabesi kullan. Başka alfabeler (Asya dilleri vs.) kullanmak kesinlikle yasaktır.";
-        return askAi(defaultSystemPrompt, prompt);
+    public AiService(List<AiProvider> providers) {
+        for (AiProvider provider : providers) {
+            providerMap.put(provider.getProviderName().toLowerCase(), provider);
+        }
     }
 
-    /**
-     * Özelleştirilmiş system prompt ile AI'ya soru gönderir.
-     * DummyLogGeneratorService gibi sıkı kısıtlama gerektiren servisler bu overload'u kullanır.
-     */
-    public String askAi(String systemPrompt, String userPrompt) {
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setBearerAuth(apiKey);
+    public String askAi(String prompt, String providerName) {
+        String defaultSystemPrompt = "Sen uzman bir yazılım mühendisisin. Tüm yanıtlarını TÜRKÇE olarak vermelisin. KESİNLİKLE sadece Latin alfabesi kullan.";
+        return askAi(defaultSystemPrompt, prompt, providerName);
+    }
 
-            Map<String, String> systemMessage = Map.of(
-                    "role", "system",
-                    "content", systemPrompt
-            );
-
-            Map<String, String> userMessage = Map.of(
-                    "role", "user",
-                    "content", userPrompt
-            );
-
-            Map<String, Object> requestBodyMap = Map.of(
-                    "model", "llama-3.3-70b-versatile",
-                    "messages", List.of(systemMessage, userMessage),
-                    "temperature", 0.1
-            );
-
-            String requestBody = objectMapper.writeValueAsString(requestBodyMap);
-
-            HttpEntity<String> request = new HttpEntity<>(requestBody, headers);
-            ResponseEntity<String> response = restTemplate.postForEntity(API_URL, request, String.class);
-
-            JsonNode rootNode = objectMapper.readTree(response.getBody());
-            return rootNode.path("choices").get(0).path("message").path("content").asText();
-        } catch (Exception e) {
-            return "Groq servisine ulaşılamadı: " + e.getMessage();
+    public String askAi(String systemPrompt, String userPrompt, String requestedProvider) {
+        if (requestedProvider == null || requestedProvider.trim().isEmpty()) {
+            requestedProvider = "gemini-auto";
         }
+        requestedProvider = requestedProvider.toLowerCase();
+
+        if (requestedProvider.equals("gemini-auto")) {
+            return handleGeminiAutoFallback(systemPrompt, userPrompt);
+        }
+        else if (requestedProvider.startsWith("gemini-")) {
+            String response = providerMap.get("gemini").askAi(systemPrompt, userPrompt, requestedProvider);
+            if ("API_ERROR_429".equals(response)) {
+                return "HATA: Seçtiğiniz '" + requestedProvider + "' modelinin kotası dolmuş. Lütfen 'Otomatik' modu veya farklı bir modeli seçin.";
+            }
+            return response;
+        }
+        // YENİ: OpenRouter üzerinden gelen ücretsiz modelleri yakalıyoruz
+        else if (requestedProvider.contains(":free")) {
+            return providerMap.get("openrouter").askAi(systemPrompt, userPrompt, requestedProvider);
+        }
+        else {
+            return getProvider(requestedProvider).askAi(systemPrompt, userPrompt);
+        }
+    }
+
+    private String handleGeminiAutoFallback(String systemPrompt, String userPrompt) {
+        // YENİ FALLBACK LİSTESİ: 2.x serisi yerine 3.5 serisini ekledik
+        String[] fallbackModels = {"gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"};
+        AiProvider geminiProvider = providerMap.get("gemini");
+
+        for (String model : fallbackModels) {
+            String response = geminiProvider.askAi(systemPrompt, userPrompt, model);
+
+            if (!"API_ERROR_429".equals(response)) {
+                return response;
+            }
+            System.out.println("[FALLBACK UYARISI] " + model + " modelinin limiti doldu veya kapalı. Bir sonraki modele geçiliyor...");
+        }
+        return "Gemini API tüm yedek modellerinde kota aşıldı (429 Too Many Requests). Lütfen Groq modeline geçiş yapın.";
+    }
+
+    private AiProvider getProvider(String providerName) {
+        AiProvider provider = providerMap.get(providerName);
+        if (provider == null) {
+            return providerMap.get("gemini");
+        }
+        return provider;
     }
 }
