@@ -47,19 +47,19 @@ public class AiService {
     }
 
     private String handleGeminiAutoFallback(String systemPrompt, String userPrompt) {
-        // YENİ FALLBACK LİSTESİ: 2.x serisi yerine 3.5 serisini ekledik
-        String[] fallbackModels = {"gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"};
+        // YENİ: JSON dosyasındaki geçerli ve desteklenen latest modelleri kullanıyoruz
+        String[] fallbackModels = {"gemini-flash-latest", "gemini-pro-latest", "gemini-flash-lite-latest"};
         AiProvider geminiProvider = providerMap.get("gemini");
 
         for (String model : fallbackModels) {
             String response = geminiProvider.askAi(systemPrompt, userPrompt, model);
 
-            if (!"API_ERROR_429".equals(response)) {
+            if (!"API_ERROR_429".equals(response) && !response.startsWith("Gemini API Hatası")) {
                 return response;
             }
-            System.out.println("[FALLBACK UYARISI] " + model + " modelinin limiti doldu veya kapalı. Bir sonraki modele geçiliyor...");
+            System.out.println("[FALLBACK UYARISI] " + model + " modelinde hata alındı. Bir sonraki modele geçiliyor...");
         }
-        return "Gemini API tüm yedek modellerinde kota aşıldı (429 Too Many Requests). Lütfen Groq modeline geçiş yapın.";
+        return "Gemini API tüm yedek modellerinde hata aldı veya kota aşıldı. Lütfen Groq modeline geçiş yapın.";
     }
 
     private AiProvider getProvider(String providerName) {

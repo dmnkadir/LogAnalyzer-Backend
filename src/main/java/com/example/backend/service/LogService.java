@@ -239,7 +239,7 @@ public class LogService {
         User user = getUser(username);
         logRecordRepository.updateSessionName(user, sessionId, newName);
 
-        incidentReportRepository.findBySessionIdAndUser(sessionId, user)
+        incidentReportRepository.findFirstBySessionIdAndUserOrderByCreatedAtDesc(sessionId, user)
                 .ifPresent(report -> incidentReportRepository.updateReportName(report.getId(), user, newName));
     }
 

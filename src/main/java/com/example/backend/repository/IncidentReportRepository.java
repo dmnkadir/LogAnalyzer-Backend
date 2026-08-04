@@ -15,8 +15,8 @@ import java.util.Optional;
 @Repository
 public interface IncidentReportRepository extends JpaRepository<IncidentReport, Long> {
 
-    // Belirli bir oturum için daha önce rapor üretilmiş mi diye bakmak için
-    Optional<IncidentReport> findBySessionIdAndUser(String sessionId, User user);
+    // Belirli bir oturum için daha önce rapor üretilmiş mi diye bakmak için (Çoklu kayıtlara karşı güvenli)
+    Optional<IncidentReport> findFirstBySessionIdAndUserOrderByCreatedAtDesc(String sessionId, User user);
 
     // Kullanıcının Rapor Geçmişi sayfası için en yeniden en eskiye doğru tüm raporlarını listeler
     List<IncidentReport> findAllByUserOrderByCreatedAtDesc(User user);

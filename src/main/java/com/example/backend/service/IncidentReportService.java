@@ -31,7 +31,7 @@ public class IncidentReportService {
                 .orElseThrow(() -> new RuntimeException("Kullanıcı bulunamadı"));
 
         // Aynı oturumlar için kullanıcı ikinci kez "Analiz Et" derse, eski raporu ezsin (güncellesin)
-        IncidentReport report = incidentReportRepository.findBySessionIdAndUser(sessionId, user)
+        IncidentReport report = incidentReportRepository.findFirstBySessionIdAndUserOrderByCreatedAtDesc(sessionId, user)
                 .orElse(new IncidentReport());
 
         report.setUser(user);
@@ -46,7 +46,7 @@ public class IncidentReportService {
     public Optional<IncidentReport> getReportBySessionId(String username, String sessionId) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("Kullanıcı bulunamadı"));
-        return incidentReportRepository.findBySessionIdAndUser(sessionId, user);
+        return incidentReportRepository.findFirstBySessionIdAndUserOrderByCreatedAtDesc(sessionId, user);
     }
 
     // Kullanıcının ürettiği tüm raporları listeler (Frontend'deki Rapor Geçmişi sayfası için)

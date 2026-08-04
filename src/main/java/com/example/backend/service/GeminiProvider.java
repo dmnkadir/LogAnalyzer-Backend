@@ -52,6 +52,21 @@ public class GeminiProvider implements AiProvider {
     @Override
     public String askAi(String systemPrompt, String userPrompt, String specificModel) {
         try {
+            // YENİ: Gönderilen model adı 3.6, 3.5 vb. spesifik bir sürümse,
+            // API'nin izin verdiği "latest" alias (takma ad) değerine dönüştürüyoruz.
+            if (specificModel == null || specificModel.trim().isEmpty()) {
+                specificModel = "gemini-flash-latest";
+            }
+
+            String normalizedModel = specificModel.toLowerCase();
+            if (normalizedModel.contains("pro")) {
+                specificModel = "gemini-pro-latest";
+            } else if (normalizedModel.contains("lite")) {
+                specificModel = "gemini-flash-lite-latest";
+            } else {
+                specificModel = "gemini-flash-latest";
+            }
+
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
 
@@ -65,7 +80,7 @@ public class GeminiProvider implements AiProvider {
 
             HttpEntity<String> request = new HttpEntity<>(objectMapper.writeValueAsString(requestBodyMap), headers);
 
-            // URL artık dışarıdan gelen spesifik modele göre dinamik oluşuyor
+            // Artık istek her zaman geçerli olan "latest" model URL'sine gidecek
             String dynamicUrl = "https://generativelanguage.googleapis.com/v1beta/models/" + specificModel + ":generateContent?key=" + apiKey;
 
             ResponseEntity<String> response = restTemplate.postForEntity(dynamicUrl, request, String.class);
@@ -79,7 +94,6 @@ public class GeminiProvider implements AiProvider {
             return "Gemini API yanıt üretemedi.";
 
         } catch (HttpClientErrorException e) {
-            // EĞER KOTA AŞILDIYSA ÖZEL KOD DÖNDÜRÜYORUZ (AiService burayı yakalayacak)
             if (e.getStatusCode().value() == 429) {
                 return "API_ERROR_429";
             }
