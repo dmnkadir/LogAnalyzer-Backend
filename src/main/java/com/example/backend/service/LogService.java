@@ -239,8 +239,8 @@ public class LogService {
         User user = getUser(username);
         logRecordRepository.updateSessionName(user, sessionId, newName);
 
-        incidentReportRepository.findFirstBySessionIdAndUserOrderByCreatedAtDesc(sessionId, user)
-                .ifPresent(report -> incidentReportRepository.updateReportName(report.getId(), user, newName));
+        // Artık oturum ismi değiştiğinde Incident Report ismini GÜNCELLEMİYORUZ.
+        // İkisi tamamen bağımsız çalışacak.
     }
 
     @Transactional

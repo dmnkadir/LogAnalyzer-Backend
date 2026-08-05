@@ -37,7 +37,6 @@ public class AiController {
         this.incidentReportService = incidentReportService;
     }
 
-    // Parametre eklendi: provider
     @GetMapping("/test")
     public ResponseEntity<ApiResponse<String>> testGemini(
             @RequestParam("soru") String soru,
@@ -46,7 +45,6 @@ public class AiController {
         return ResponseEntity.ok(ApiResponse.success(cevap, "AI Yanıtı başarılı"));
     }
 
-    // Parametre eklendi: provider
     @GetMapping("/analyze-session/{sessionIds}")
     public ResponseEntity<ApiResponse<String>> analyzeSession(
             @PathVariable List<String> sessionIds,
@@ -75,8 +73,35 @@ public class AiController {
 
             String aiResponse = aiService.askAi(prompt, provider);
 
+            // --- GÜVENLİK FİLTRESİ (ESNETİLDİ VE TÜRKÇE KARAKTERLERE DUYARLI HALE GETİRİLDİ) ---
+            String lowerResponse = aiResponse.toLowerCase();
+
+            // Türkçe karakter bozulmalarını (ö->o, ç->c) tolere etmek için varyasyonları kontrol ediyoruz
+            boolean hasSummary = lowerResponse.contains("genel özet") || lowerResponse.contains("genel ozet");
+            boolean hasRisk = lowerResponse.contains("risk seviyesi");
+            boolean hasSolution = lowerResponse.contains("çözüm adımları") || lowerResponse.contains("cozum adimlari") ||
+                    lowerResponse.contains("kök neden") || lowerResponse.contains("kok neden");
+
+            // API'den doğrudan gelen hata mesajları var mı?
+            boolean isApiError = lowerResponse.contains("api_error") || lowerResponse.contains("yanıt üretemedi") || lowerResponse.contains("ulaşılamadı");
+
+            // Yapay zeka bazen başlıklardan birini unutabilir veya farklı yazabilir.
+            // Eğer isApiError yoksa ve beklediğimiz 3 ana bölümden en az 2'si varsa raporu BAŞARILI sayıyoruz!
+            int validHeaders = 0;
+            if (hasSummary) validHeaders++;
+            if (hasRisk) validHeaders++;
+            if (hasSolution) validHeaders++;
+
+            if (isApiError || validHeaders < 2) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(ApiResponse.error("Yapay zeka geçerli formatta analiz yapamadı veya bağlantı koptu. Çıktı: " + aiResponse));
+            }
+            // ---------------------------------------------------------------------------------
+
             String combinedSessionIds = String.join(",", sessionIds);
-            incidentReportService.saveReport(principal.getName(), combinedSessionIds, aiResponse);
+
+            // provider bilgisini de kaydediyoruz
+            incidentReportService.saveReport(principal.getName(), combinedSessionIds, aiResponse, provider);
 
             return ResponseEntity.ok(ApiResponse.success(aiResponse, "Analiz Tamamlandı ve Kaydedildi"));
         } catch (Exception e) {
@@ -111,7 +136,6 @@ public class AiController {
             String prompt = "Sen kıdemli bir Yazılım Mimarı ve Sistem Uzmanısın. Sıkça karşılaştığımız '" + request.getExceptionName() + "' hatasını açıkla. " +
                     "Yanıt SADECE TÜRKÇE olmalıdır.\n\nMARKDOWN FORMATI:\n### Hata Nedir?\n[Açıklama]\n\n### Ne Zaman / Neden Oluşur?\n- [Sebep 1]\n\n### Nasıl Çözülür?\n1. [Çözüm 1]";
 
-            // DTO içinden provider bilgisini alıyoruz
             String provider = (request.getProvider() != null) ? request.getProvider() : "gemini";
             String aiResponse = aiService.askAi(prompt, provider);
 
@@ -142,7 +166,6 @@ public class AiController {
         }
     }
 
-    // Parametre eklendi: provider
     @GetMapping("/suggest-name/session/{sessionId}")
     public ResponseEntity<ApiResponse<String>> suggestSessionName(
             @PathVariable String sessionId,
@@ -163,9 +186,16 @@ public class AiController {
                     "SADECE BAŞLIĞI YAZ.\n\nLoglar:\n" + logSnippet;
 
             String aiName = aiService.askAi(prompt, provider).replace("\"", "").trim();
+
+            if (aiName.length() > 60) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(ApiResponse.error("Yapay zeka geçerli bir isim üretemedi (Yanıt çok uzun)."));
+            }
+
             return ResponseEntity.ok(ApiResponse.success(aiName, "İsim önerisi başarılı"));
         } catch (Exception e) {
-            return ResponseEntity.ok(ApiResponse.success("Genel Analiz Oturumu", "Hata oluştu"));
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ApiResponse.error("Hata oluştu: " + e.getMessage()));
         }
     }
 }

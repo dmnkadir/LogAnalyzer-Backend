@@ -30,4 +30,8 @@ public interface IncidentReportRepository extends JpaRepository<IncidentReport, 
     // Sadece raporun sahibi silebilsin diye
     @Transactional
     void deleteByIdAndUser(Long id, User user);
+
+    // Oturum, kullanıcı ve modele (provider) göre raporu bulur
+    Optional<IncidentReport> findFirstBySessionIdAndUserAndProviderOrderByCreatedAtDesc(String sessionId, User user, String provider);
+
 }

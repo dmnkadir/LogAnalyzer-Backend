@@ -35,4 +35,9 @@ public class IncidentReport {
     // Kullanıcının rapora vereceği özel isim
     @Column(length = 255)
     private String reportName;
+
+    // Hangi AI modeli/provider ile üretildiğini tutuyoruz
+    @Column(length = 100)
+    private String provider;
+
 }

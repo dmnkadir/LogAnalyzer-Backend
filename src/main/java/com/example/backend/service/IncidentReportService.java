@@ -26,18 +26,19 @@ public class IncidentReportService {
     }
 
     // AI'dan gelen raporu veritabanına kaydeder
-    public IncidentReport saveReport(String username, String sessionId, String reportContent) {
+    public IncidentReport saveReport(String username, String sessionId, String reportContent, String provider) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("Kullanıcı bulunamadı"));
 
-        // Aynı oturumlar için kullanıcı ikinci kez "Analiz Et" derse, eski raporu ezsin (güncellesin)
-        IncidentReport report = incidentReportRepository.findFirstBySessionIdAndUserOrderByCreatedAtDesc(sessionId, user)
+        // Aynı oturum ve aynı AI modeli için ikinci kez "Analiz Et" derse günceller, model farklıysa YENİ rapor açar
+        IncidentReport report = incidentReportRepository.findFirstBySessionIdAndUserAndProviderOrderByCreatedAtDesc(sessionId, user, provider)
                 .orElse(new IncidentReport());
 
         report.setUser(user);
         report.setSessionId(sessionId);
         report.setReportContent(reportContent);
-        report.setCreatedAt(LocalDateTime.now()); // Güncellenmişse tarihini de yenile
+        report.setProvider(provider); // Model bilgisini kaydediyoruz
+        report.setCreatedAt(LocalDateTime.now());
 
         return incidentReportRepository.save(report);
     }
@@ -66,14 +67,12 @@ public class IncidentReportService {
     @org.springframework.transaction.annotation.Transactional
     public void updateReportName(Long id, String username, String newName) {
         User user = userRepository.findByUsername(username).orElseThrow();
-        IncidentReport report = incidentReportRepository.findById(id).orElseThrow();
 
+        // Sadece raporun ismini güncelliyoruz
         incidentReportRepository.updateReportName(id, user, newName);
 
-        // Eğer bu rapor tek bir oturuma aitse (içinde virgül yoksa), oturumun ismini de güncelle
-        if (!report.getSessionId().contains(",")) {
-            logRecordRepository.updateSessionName(user, report.getSessionId(), newName);
-        }
+        // Artık rapor ismi değiştiğinde logRecordRepository üzerinden
+        // Session (Oturum) ismini GÜNCELLEMİYORUZ. İkisi tamamen bağımsız.
     }
 
 }
